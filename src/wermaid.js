@@ -56,20 +56,21 @@ const END_RE = /^\s*%%\s*@end\b/;
 
 /**
  * Split source into Mermaid body + parsed overrides.
- * @returns {{ body: string, hasBlock: boolean, overrides: Overrides, errors: {line:number,message:string}[] }}
+ * `block` is the layout block as text (`@layout` through `@end`), '' when there is none.
+ * @returns {{ body: string, block: string, hasBlock: boolean, overrides: Overrides, errors: {line:number,message:string}[] }}
  */
 export function parseSource(src) {
   const lines = src.split('\n');
   const start = lines.findIndex((l) => START_RE.test(l));
   if (start === -1) {
-    return { body: src, hasBlock: false, overrides: emptyOverrides(), errors: [] };
+    return { body: src, block: '', hasBlock: false, overrides: emptyOverrides(), errors: [] };
   }
   let end = lines.findIndex((l, i) => i > start && END_RE.test(l));
   if (end === -1) end = lines.length;
   const blockLines = lines.slice(start + 1, end);
   const body = [...lines.slice(0, start), ...lines.slice(end + 1)].join('\n').replace(/\s+$/, '');
   const { overrides, errors } = parseBlockLines(blockLines, start + 2);
-  return { body, hasBlock: true, overrides, errors };
+  return { body, block: lines.slice(start, end + 1).join('\n'), hasBlock: true, overrides, errors };
 }
 
 export function emptyOverrides() {

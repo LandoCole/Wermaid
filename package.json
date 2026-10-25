@@ -13,7 +13,8 @@
     "src/wermaid.js",
     "src/themes.js",
     "src/element.js",
-    "src/edit.js"
+    "src/edit.js",
+    "src/persist.js"
   ],
   "scripts": {
     "build": "node build.mjs",

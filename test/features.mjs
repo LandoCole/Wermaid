@@ -8,7 +8,13 @@ p.on('pageerror', (e) => { pageErrors.push(e.message); console.log('PAGEERR', e.
 // Every wermaid:change on the page, in order.
 const changes = [];
 await p.exposeFunction('onWermaidChange', (detail) => { changes.push(detail); });
+// Start from no stored layouts, so a run never depends on the one before it.
+const forgetLayouts = () => p.evaluate(() => {
+  for (const k of Object.keys(localStorage)) if (k.startsWith('wermaid:layout:')) localStorage.removeItem(k);
+});
 await p.goto(BASE + '/test/features.html');
+await forgetLayouts();
+await p.reload();
 await p.waitForFunction(() => window.READY, null, { timeout: 30000 });
 await p.waitForTimeout(300);
 const R = []; const ok = (n, c, x) => R.push(`${c ? 'PASS' : 'FAIL'} ${n}${c ? '' : ' ' + JSON.stringify(x)}`);
@@ -219,6 +225,116 @@ ok('compare shows the stock layout', await p.$eval('#ed', (e) => e.diagram.geome
 await p.click('#ed >> [data-act="compare"]');
 ok('compare off shows the edited layout again', await p.$eval('#ed', (e) => e.diagram.geometry.nodes.get('X').delta.y) > 0);
 ok('the editing controls have accessible names', await p.$eval('#ed', (e) => [...e.shadowRoot.querySelectorAll('.toolbar button, .toolbar select')].every((n) => n.getAttribute('aria-label') || n.textContent.trim())));
+
+// Keeping adjustments in the browser.
+const ready = async () => {
+  await p.waitForFunction(() => window.READY, null, { timeout: 30000 });
+  await p.waitForTimeout(300);
+};
+const reset = async (sel) => {
+  await p.locator(`${sel} >> [data-act="reset"]`).click();
+  await settle();
+};
+// The stored entry for a diagram, parsed, or null: looked up the way the element names it.
+const storedFor = (sel) => p.$eval(sel, async (e) => {
+  const m = await import('/src/persist.js');
+  const raw = localStorage.getItem('wermaid:layout:' + (e.getAttribute('persist-key') || m.sourceKey(e._supplied)));
+  return raw === null ? null : JSON.parse(raw);
+});
+const layoutCount = () => p.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('wermaid:layout:') && k !== 'wermaid:layout:index').length);
+// Add an editable diagram to the page, wait for it to draw.
+const mount = async (id, source, attrs = {}) => {
+  await p.evaluate(({ id, source, attrs }) => {
+    const e = document.createElement('wermaid-diagram');
+    e.id = id; e.setAttribute('features', 'edit');
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    document.body.append(e);
+    e.source = source;
+  }, { id, source, attrs });
+  await rendered('#' + id);
+};
+const unmount = (id) => p.evaluate((id) => document.getElementById(id)?.remove(), id);
+// Two spellings of one diagram share an entry: adjust the first, the second comes up adjusted.
+const sameKey = async (a, b) => {
+  await mount('key-a', a);
+  await dragNode('#key-a', 'K', 0, 40);
+  await mount('key-b', b);
+  const shared = /%% K\s+nudge 0,\d+/.test(await editedSource('#key-b'));
+  await unmount('key-a'); await unmount('key-b');
+  return shared;
+};
+// Identical sources with different persist-keys do not share: adjust one, reload, the other is untouched.
+const keysDiffer = async (a, b) => {
+  await dragNode(a, 'B', 0, 50);
+  await p.reload(); await ready();
+  return /%% B\s+nudge 0,\d+/.test(await editedSource(a)) && !/nudge/.test(await editedSource(b));
+};
+// Keep n layouts through the module's own API; how many stay stored.
+const fillAndCount = (n) => p.evaluate(async (n) => {
+  const m = await import('/src/persist.js');
+  for (const k of Object.keys(localStorage)) if (k.startsWith('wermaid:layout:')) localStorage.removeItem(k);
+  const store = m.createPersistence();
+  for (let i = 0; i < n; i++) store.save('fill-' + i, '%% @layout v1\n%% A  nudge 0,' + (i + 1) + '\n%% @end');
+  return Object.keys(localStorage).filter((k) => k.startsWith('wermaid:layout:') && k !== 'wermaid:layout:index').length;
+}, n);
+// Run fn with every localStorage call throwing.
+const withThrowingStorage = async (fn) => {
+  await p.evaluate(() => {
+    window.__ls = { get: Storage.prototype.getItem, set: Storage.prototype.setItem, del: Storage.prototype.removeItem };
+    for (const k of ['getItem', 'setItem', 'removeItem']) Storage.prototype[k] = () => { throw new DOMException('blocked', 'SecurityError'); };
+  });
+  try { await fn(); } finally {
+    await p.evaluate(() => { Storage.prototype.getItem = window.__ls.get; Storage.prototype.setItem = window.__ls.set; Storage.prototype.removeItem = window.__ls.del; });
+  }
+  return true;
+};
+
+await forgetLayouts();
+await p.reload(); await ready();
+const plainKeyed = 'flowchart LR\n  K --> L';
+const indentedCRLF = '    flowchart LR\r\n      K --> L\r\n  ';
+await dragNode('#ed', 'B', 0, 60);
+ok('an adjustment is stored as a layout block', /^%% @layout v1[\s\S]*%% B\s+nudge 0,\d+/.test((await storedFor('#ed'))?.block ?? ''), await storedFor('#ed'));
+const changesBeforeReload = changes.length;
+await p.reload(); await ready();
+ok('adjustment survives a reload', /%% B\s+nudge 0,\d+/.test(await editedSource('#ed')), await editedSource('#ed'));
+ok('a restored layout is not announced as a change', changes.length === changesBeforeReload);
+ok('reset after a reload goes back to the source as supplied', await (async () => {
+  await reset('#ed');
+  return last().reason === 'reset' && last().source === 'flowchart LR\n  A --> B --> C' && await storedFor('#ed') === null;
+})());
+ok('persist key ignores indentation and line endings', await sameKey(indentedCRLF, plainKeyed));
+await dragNode('#ed', 'B', 0, 60);
+await p.keyboard.press(`${MOD}+z`); await settle();
+ok('undoing back to the supplied source clears the stored layout', await storedFor('#ed') === null);
+await dragNode('#ed', 'A', 0, 40); await dragNode('#ed', 'B', 0, 40);
+await clickNode('#ed', 'B'); await p.keyboard.press('Delete'); await settle();
+ok('deleting one selection keeps the rest stored', last().reason === 'reset' && /%% A\s+nudge/.test((await storedFor('#ed'))?.block ?? '') && !/%% B\s+nudge/.test((await storedFor('#ed'))?.block ?? ''), await storedFor('#ed'));
+await pickTheme('#ed', 'pele');
+await p.reload(); await ready();
+ok('a theme pick is kept with the layout', await themeOf('#ed') === 'pele' && /%% @theme pele/.test(await editedSource('#ed')));
+await reset('#ed'); await p.reload(); await ready();
+ok('reset clears the stored layout', !/%% B\s+nudge/.test(await editedSource('#ed')) && await storedFor('#ed') === null && await themeOf('#ed') === 'wermaid');
+await dragNode('#twin-a', 'B', 0, 50);
+ok('persist-key separates identical diagrams', await keysDiffer('#twin-a', '#twin-b'));
+const storedBefore = await layoutCount();
+await dragNode('#off', 'B', 0, 40);
+ok('persist="off" stores nothing', await storedFor('#off') === null && /%% B\s+nudge/.test(await editedSource('#off')) && await layoutCount() === storedBefore, await layoutCount());
+await p.evaluate(() => { document.querySelector('#plain').features = 'copy'; });
+ok('a diagram without edit stores nothing', await storedFor('#plain') === null);
+ok('a stored entry records when it was last used', typeof (await storedFor('#twin-a'))?.used === 'number');
+ok('only 200 layouts kept', await fillAndCount(205) === 200);
+ok('the 200 kept are the most recent', await p.evaluate(() => localStorage.getItem('wermaid:layout:fill-204') !== null && localStorage.getItem('wermaid:layout:fill-4') === null && localStorage.getItem('wermaid:layout:fill-5') !== null));
+await forgetLayouts();
+await p.reload(); await ready();
+const errorsBefore = pageErrors.length;
+ok('edit works when localStorage throws', await withThrowingStorage(() => dragNode('#ed', 'B', 0, 40)) && pageErrors.length === errorsBefore && /%% B\s+nudge 0,\d+/.test(await editedSource('#ed')), pageErrors);
+ok('a diagram renders when localStorage throws', await withThrowingStorage(() => mount('late', 'flowchart LR\n  M --> N')) && pageErrors.length === errorsBefore && await p.$eval('#late', (e) => !!e.diagram));
+await unmount('late');
+ok('a broken store only switches persistence off for its own diagram', await (async () => {
+  await dragNode('#twin-a', 'B', 0, 30);
+  return (await storedFor('#twin-a'))?.block?.includes('nudge') === true;
+})());
 
 // Touch devices always show the toolbar.
 const touch = await b.newContext({ viewport: { width: 400, height: 800 }, hasTouch: true, isMobile: true });

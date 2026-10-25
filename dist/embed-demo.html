@@ -703,20 +703,21 @@ const END_RE = /^\s*%%\s*@end\b/;
 
 /**
  * Split source into Mermaid body + parsed overrides.
- * @returns {{ body: string, hasBlock: boolean, overrides: Overrides, errors: {line:number,message:string}[] }}
+ * `block` is the layout block as text (`@layout` through `@end`), '' when there is none.
+ * @returns {{ body: string, block: string, hasBlock: boolean, overrides: Overrides, errors: {line:number,message:string}[] }}
  */
 function parseSource(src) {
   const lines = src.split('\n');
   const start = lines.findIndex((l) => START_RE.test(l));
   if (start === -1) {
-    return { body: src, hasBlock: false, overrides: emptyOverrides(), errors: [] };
+    return { body: src, block: '', hasBlock: false, overrides: emptyOverrides(), errors: [] };
   }
   let end = lines.findIndex((l, i) => i > start && END_RE.test(l));
   if (end === -1) end = lines.length;
   const blockLines = lines.slice(start + 1, end);
   const body = [...lines.slice(0, start), ...lines.slice(end + 1)].join('\n').replace(/\s+$/, '');
   const { overrides, errors } = parseBlockLines(blockLines, start + 2);
-  return { body, hasBlock: true, overrides, errors };
+  return { body, block: lines.slice(start, end + 1).join('\n'), hasBlock: true, overrides, errors };
 }
 
 function emptyOverrides() {
@@ -2557,6 +2558,101 @@ function createHistory(limit = 200) {
 }
 
 /*
+ * Keeping a diagram's adjustments in the browser, for <wermaid-diagram>.
+ *
+ * An entry is the diagram's layout block (which includes the user's theme and edge-look picks),
+ * stored under `wermaid:layout:<key>` as { block, used }. The key is the element's `persist-key`,
+ * else a hash of the source as the app supplied it (see sourceKey). An index under
+ * `wermaid:layout:index` lists the keys, least recently used first, and keeps the newest 200.
+ *
+ * Storage can be missing, full or blocked. Every call is guarded, and the first failure turns
+ * the persistence it came from off for good: the diagram carries on, just without keeping anything.
+ */
+
+
+const PREFIX = 'wermaid:layout:';
+const INDEX = PREFIX + 'index';
+const MAX_LAYOUTS = 200;
+
+/** A short deterministic string for a supplied source: indentation, line endings and outer whitespace do not count. */
+function sourceKey(text) {
+  const s = String(text).replace(/\r\n?/g, '\n').trim();
+  // cyrb53: two 32-bit hashes mixed into 53 bits.
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/** The text with its layout block replaced by `block` ('' = no block). */
+function withBlock(text, block) {
+  const { body } = parseSource(text);
+  return block ? `${body}\n\n${block}\n` : `${body}\n`;
+}
+
+// A key that would collide with the index is moved aside (one more underscore), so the
+// mapping stays one to one.
+const slot = (key) => PREFIX + (/^_*index$/.test(key) ? '_' + key : key);
+
+/** One element's access to the stored layouts. */
+function createPersistence() {
+  let failed = false;
+  const guard = (fn, fallback) => {
+    if (failed) return fallback;
+    try { return fn(); } catch { failed = true; return fallback; }
+  };
+  const readIndex = (ls) => {
+    try {
+      const list = JSON.parse(ls.getItem(INDEX) ?? '[]');
+      return Array.isArray(list) ? list.filter((k) => typeof k === 'string') : [];
+    } catch (err) {
+      if (err instanceof SyntaxError) return [];
+      throw err;
+    }
+  };
+  // Mark a key as the most recently used, and drop the least recently used past the limit.
+  const touch = (ls, key) => {
+    const keys = readIndex(ls).filter((k) => k !== key);
+    keys.push(key);
+    while (keys.length > MAX_LAYOUTS) ls.removeItem(slot(keys.shift()));
+    ls.setItem(INDEX, JSON.stringify(keys));
+  };
+  const write = (ls, key, block) => {
+    ls.setItem(slot(key), JSON.stringify({ block, used: Date.now() }));
+    touch(ls, key);
+  };
+  return {
+    /** True once a storage call has failed; nothing is kept after that. */
+    get failed() { return failed; },
+    /** The stored block for a key (and mark it used), or null. */
+    load: (key) => guard(() => {
+      const ls = localStorage;
+      const raw = ls.getItem(slot(key));
+      if (raw === null) return null;
+      let entry;
+      try { entry = JSON.parse(raw); } catch { return null; }
+      if (typeof entry?.block !== 'string') return null;
+      write(ls, key, entry.block);
+      return entry.block;
+    }, null),
+    /** Keep a block for a key. */
+    save: (key, block) => guard(() => write(localStorage, key, block)),
+    /** Forget a key. */
+    drop: (key) => guard(() => {
+      const ls = localStorage;
+      ls.removeItem(slot(key));
+      const keys = readIndex(ls);
+      if (keys.includes(key)) ls.setItem(INDEX, JSON.stringify(keys.filter((k) => k !== key)));
+    }),
+  };
+}
+
+/*
  * Embedding Wermaid in a page.
  *
  *   import mermaid from 'mermaid';
@@ -2595,6 +2691,12 @@ function createHistory(limit = 200) {
  * Shift+Ctrl/⌘ Z (or Ctrl/⌘ Y) redoes. A theme or edge-look pick is written into the diagram's
  * block as `%% @theme` / `%% @edges`, so it travels with the source.
  *
+ * Adjustments are kept in the user's browser while `edit` is on, and put back when the same
+ * diagram renders again (after a reload, say). The same diagram is the same source as supplied,
+ * or the same `persist-key`. Reset forgets them.
+ *   persist      off = keep nothing (page-wide: defineWermaidElement's `defaults: { persist: false }`)
+ *   persist-key  names the diagram, to tell identical sources apart (e.g. "message-123:diagram-1")
+ *
  * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}},
  * `wermaid:change` {detail: {source, reason}} once per completed change, where reason is one of
  * drag key reset undo redo pin style theme edges, and source is the full text with its block.
@@ -2602,6 +2704,7 @@ function createHistory(limit = 200) {
  * `features` is the resolved list of features (set it with an array or a space-separated string);
  * `editedSource` is the source with the current block (the supplied source plus any edits).
  */
+
 
 
 
@@ -2834,6 +2937,7 @@ class WermaidDiagram extends HTMLElement {
     this._loaded = 0;
     this._renderKey = null;
     this._history = createHistory();
+    this._storage = createPersistence();
     this._editor = null;
     this._editorFor = null;
     this._stock = false;
@@ -2988,6 +3092,10 @@ class WermaidDiagram extends HTMLElement {
         text = dedent(text);
         this._loaded = wanted;
         this._supplied = this._current = text;
+        // Adjustments kept from an earlier visit replace the supplied block; Reset still goes back to the text.
+        const key = this._layoutKey();
+        const kept = key !== null ? this._storage.load(key) : null;
+        if (typeof kept === 'string') this._current = withBlock(text, kept);
         this._history.clear();
         this._editor?.select(null);
       } else {
@@ -3115,7 +3223,23 @@ class WermaidDiagram extends HTMLElement {
     this._updateEditChrome();
   }
 
+  /** The key this diagram's adjustments are kept under, or null when they are not kept. */
+  _layoutKey() {
+    if (this._supplied === null || !this.features.includes('edit')) return null;
+    if (this.getAttribute('persist') === 'off' || pageDefaults.persist === false) return null;
+    return this.getAttribute('persist-key') || sourceKey(this._supplied);
+  }
+
+  /** Keep the adjustments as they stand, or forget them when there are none. */
+  _keep() {
+    const key = this._layoutKey();
+    if (key === null) return;
+    if (this._current === this._supplied) this._storage.drop(key);
+    else this._storage.save(key, parseSource(this._current).block);
+  }
+
   _emitChange(reason) {
+    this._keep();
     this._updateEditChrome();
     this.dispatchEvent(new CustomEvent('wermaid:change', { detail: { source: this._current, reason }, bubbles: true, composed: true }));
   }
@@ -3139,7 +3263,7 @@ class WermaidDiagram extends HTMLElement {
     if (this._supplied === null) return;
     this._history.clear();
     this._editor?.select(null);
-    if (this._current === this._supplied) { this._updateEditChrome(); return; }
+    if (this._current === this._supplied) { this._keep(); this._updateEditChrome(); return; }
     this._show(this._supplied);
     this._emitChange('reset');
   }

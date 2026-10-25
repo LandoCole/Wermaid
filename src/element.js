@@ -37,6 +37,12 @@
  * Shift+Ctrl/⌘ Z (or Ctrl/⌘ Y) redoes. A theme or edge-look pick is written into the diagram's
  * block as `%% @theme` / `%% @edges`, so it travels with the source.
  *
+ * Adjustments are kept in the user's browser while `edit` is on, and put back when the same
+ * diagram renders again (after a reload, say). The same diagram is the same source as supplied,
+ * or the same `persist-key`. Reset forgets them.
+ *   persist      off = keep nothing (page-wide: defineWermaidElement's `defaults: { persist: false }`)
+ *   persist-key  names the diagram, to tell identical sources apart (e.g. "message-123:diagram-1")
+ *
  * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}},
  * `wermaid:change` {detail: {source, reason}} once per completed change, where reason is one of
  * drag key reset undo redo pin style theme edges, and source is the full text with its block.
@@ -47,6 +53,7 @@
 
 import { createWermaid, parseSource, writeSource, DEFAULT_THEME, clampView, defineTheme, listThemes, getTheme } from './wermaid.js';
 import { createEditor, createHistory } from './edit.js';
+import { createPersistence, sourceKey, withBlock } from './persist.js';
 
 export { defineTheme, listThemes };
 
@@ -276,6 +283,7 @@ export class WermaidDiagram extends HTMLElement {
     this._loaded = 0;
     this._renderKey = null;
     this._history = createHistory();
+    this._storage = createPersistence();
     this._editor = null;
     this._editorFor = null;
     this._stock = false;
@@ -430,6 +438,10 @@ export class WermaidDiagram extends HTMLElement {
         text = dedent(text);
         this._loaded = wanted;
         this._supplied = this._current = text;
+        // Adjustments kept from an earlier visit replace the supplied block; Reset still goes back to the text.
+        const key = this._layoutKey();
+        const kept = key !== null ? this._storage.load(key) : null;
+        if (typeof kept === 'string') this._current = withBlock(text, kept);
         this._history.clear();
         this._editor?.select(null);
       } else {
@@ -557,7 +569,23 @@ export class WermaidDiagram extends HTMLElement {
     this._updateEditChrome();
   }
 
+  /** The key this diagram's adjustments are kept under, or null when they are not kept. */
+  _layoutKey() {
+    if (this._supplied === null || !this.features.includes('edit')) return null;
+    if (this.getAttribute('persist') === 'off' || pageDefaults.persist === false) return null;
+    return this.getAttribute('persist-key') || sourceKey(this._supplied);
+  }
+
+  /** Keep the adjustments as they stand, or forget them when there are none. */
+  _keep() {
+    const key = this._layoutKey();
+    if (key === null) return;
+    if (this._current === this._supplied) this._storage.drop(key);
+    else this._storage.save(key, parseSource(this._current).block);
+  }
+
   _emitChange(reason) {
+    this._keep();
     this._updateEditChrome();
     this.dispatchEvent(new CustomEvent('wermaid:change', { detail: { source: this._current, reason }, bubbles: true, composed: true }));
   }
@@ -581,7 +609,7 @@ export class WermaidDiagram extends HTMLElement {
     if (this._supplied === null) return;
     this._history.clear();
     this._editor?.select(null);
-    if (this._current === this._supplied) { this._updateEditChrome(); return; }
+    if (this._current === this._supplied) { this._keep(); this._updateEditChrome(); return; }
     this._show(this._supplied);
     this._emitChange('reset');
   }
