@@ -201,7 +201,65 @@
   }
   .toast.on { opacity: 1; transform: none; }
 
+  /* ---- theme panel: a third plate beside the diagram, light and dark side by side ---- */
+  .text-btn[aria-expanded="true"] { text-decoration: underline; text-decoration-thickness: 1px; }
+  main.theming { grid-template-columns: minmax(220px, 0.62fr) minmax(0, 1.7fr) minmax(300px, 0.92fr); }
+  main.theming .tools { flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; }
+  main.theming .tools label { white-space: nowrap; }
+  .theme-panel { grid-column: 3; grid-row: 1; grid-template-rows: minmax(0, 1fr); }
+  /* The scroll area starts below the plate title, so rows never slide under it. */
+  .theme-body { overflow: auto; min-height: 0; margin-top: 14px; padding: 10px 16px 18px; display: grid; gap: 20px; align-content: start; }
+  .tp-link { border: 0; background: none; cursor: pointer; padding: 0 2px; color: var(--graphite); font-size: 12px; }
+  .tp-link:hover { color: var(--ink); }
+  .tp-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; align-items: center; }
+  .tp-fields label, .tp-grid .k, .tp-share .k { font-size: 12px; color: var(--graphite); }
+  .tp-input {
+    width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 0; border: 0; border-bottom: 1px solid var(--line-strong);
+    border-radius: 0; background: transparent; font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .tp-input::placeholder { color: var(--graphite); opacity: 0.75; }
+  .tp-input[aria-invalid="true"] { border-bottom-color: var(--warn); color: var(--warn); }
+  .tp-grid { display: grid; grid-template-columns: minmax(84px, auto) minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; align-items: center; }
+  .tp-grid h3 {
+    grid-column: 1 / -1; margin: 12px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--line);
+    font-size: 10.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .tp-grid .seg { grid-column: 2 / 4; display: grid; grid-template-columns: 1fr 1fr; }
+  .tp-grid select.pick { width: 100%; min-width: 0; }
+  .tp-grid .wide { grid-column: span 2; }
+  .tp-color { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .tp-color input[type="color"] {
+    flex: none; width: 14px; height: 14px; padding: 0; border: 0; background: none; cursor: pointer;
+    outline: 1px solid var(--line-strong); outline-offset: 0;
+  }
+  .tp-color input[type="color"]:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
+  .tp-color input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+  .tp-color input[type="color"]::-webkit-color-swatch { border: 0; }
+  .tp-color input[type="color"]::-moz-color-swatch { border: 0; }
+  .tp-note { margin: -8px 0 0; font-size: 12px; color: var(--warn); }
+  .tp-share { display: grid; gap: 8px; }
+  .tp-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  #theme-paste {
+    width: 100%; box-sizing: border-box; min-height: 88px; resize: vertical; margin: 0; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 0; background: transparent; font-size: 11.5px; line-height: 1.5; white-space: pre;
+  }
+  #theme-paste:focus-visible { outline: none; border-color: var(--line-strong); }
+  .tp-msg { margin: 0; font-size: 12px; color: var(--graphite); }
+  .tp-msg:empty { display: none; }
+  .tp-msg.warn { color: var(--warn); }
+
+  /* Mid widths: the theme panel takes the source's place, so the diagram keeps its room. */
+  @media (min-width: 861px) and (max-width: 1100px) {
+    main.theming { grid-template-columns: minmax(0, 1fr) minmax(300px, 40%); }
+    main.theming .source { display: none; }
+    main.theming .figcap { grid-column: 1; }
+    main.theming .theme-panel { grid-column: 2; }
+  }
+
   @media (max-width: 860px) {
+    main.theming { grid-template-columns: minmax(0, 1fr); grid-template-rows: 46vh 72vh auto auto; }
+    .theme-panel { grid-column: 1; grid-row: 4; }
+    .theme-body { overflow: visible; }
     body { height: auto; min-height: 100%; overflow: visible; grid-template-rows: auto auto auto; }
     main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 46vh 72vh auto; gap: 28px; }
     .figcap { grid-column: 1; grid-row: 3; margin-top: -18px; }
@@ -222,6 +280,7 @@
     <button id="redo" class="text-btn" type="button" title="Shift Ctrl/⌘ Z">Redo</button>
     <button id="reset-all" class="text-btn" type="button">Clear overrides</button>
     <button id="copy-src" class="text-btn" type="button">Copy source</button>
+    <button id="theme-btn" class="text-btn" type="button" aria-expanded="false" aria-controls="theme-panel" title="Build a palette of your own">Theme</button>
     <div class="menu-wrap">
       <button id="export-btn" class="text-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="export-menu">Export ▾</button>
       <div id="export-menu" class="menu" role="menu" aria-label="Export" hidden>
@@ -270,7 +329,8 @@
         </label>
         <label for="edge-style">Edges
           <select id="edge-style" class="pick small" title="How edges are drawn">
-            <option value="">Mermaid</option>
+            <option value="">Palette’s</option>
+            <option value="mermaid">Mermaid curves</option>
             <option value="rounded">Rounded</option>
             <option value="orthogonal">Orthogonal</option>
             <option value="curved">Curved</option>
@@ -292,6 +352,45 @@
     <div class="strip" id="strip"></div>
   </section>
   <div class="figcap"><span id="figcap">Fig. 1</span><span class="coords" id="coords"></span><span class="credit" id="palette-credit" hidden></span></div>
+
+  <section class="plate theme-panel" id="theme-panel" aria-label="Theme" hidden>
+    <div class="plate-title">
+      <h2>Theme</h2>
+      <div class="tools">
+        <button id="theme-new" class="tp-link" type="button" title="Start another theme from this one">New</button>
+        <button id="theme-close" class="tp-link" type="button">Close</button>
+      </div>
+    </div>
+    <div class="theme-body">
+      <div class="tp-fields">
+        <label for="theme-name">Name</label>
+        <input id="theme-name" class="tp-input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off"
+          pattern="[a-z][a-z0-9\-]*" aria-describedby="theme-msg" title="Lowercase letters, digits and dashes, starting with a letter">
+        <label for="theme-label">Label</label>
+        <input id="theme-label" class="tp-input" type="text" spellcheck="false" autocomplete="off">
+        <label for="theme-extends">Start from</label>
+        <select id="theme-extends" class="pick small" title="The theme this one builds on"></select>
+      </div>
+      <div class="tp-grid" id="theme-grid">
+        <span class="k">Preview</span>
+        <div class="seg" role="group" aria-label="Variant shown on the diagram">
+          <button id="theme-mode-light" type="button" aria-pressed="true" title="Show the light variant on the diagram">Light</button>
+          <button id="theme-mode-dark" type="button" aria-pressed="false" title="Show the dark variant on the diagram">Dark</button>
+        </div>
+      </div>
+      <p class="tp-note" id="theme-spacing-note" hidden>Spacing changes Mermaid's layout, so nudged shapes move with it.</p>
+      <div class="tp-share">
+        <div class="tp-row">
+          <button id="theme-copy-code" class="btn" type="button">Copy code</button>
+          <button id="theme-copy-json" class="btn" type="button">Copy JSON</button>
+        </div>
+        <label class="k" for="theme-paste">Paste a theme’s JSON or its defineTheme(…) call</label>
+        <textarea id="theme-paste" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+        <div class="tp-row"><button id="theme-import" class="btn" type="button">Import</button></div>
+      </div>
+      <p class="tp-msg" id="theme-msg" role="status"></p>
+    </div>
+  </section>
 </main>
 <div class="toast" id="toast" role="status"></div>
 
@@ -2736,10 +2835,13 @@ const isDark = () => {
   const t = document.documentElement.dataset.theme;
   return t ? t === 'dark' : darkQuery.matches;
 };
+/** The theme builder can preview either variant; otherwise the diagram follows the page. */
+let previewDark = null;
+const renderDark = () => previewDark ?? isDark();
 mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
-let renderedDark = isDark();
+let renderedDark = renderDark();
 // Palettes have light and dark variants, so a theme switch re-renders.
-const rethemed = () => { if (isDark() !== renderedDark) { renderedBody = null; refresh(srcEl.value); } };
+const rethemed = () => { if (renderDark() !== renderedDark) { renderedBody = null; refresh(srcEl.value); } };
 darkQuery.addEventListener('change', rethemed);
 new MutationObserver(rethemed).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
@@ -2760,21 +2862,72 @@ exSel.addEventListener('change', () => {
 });
 
 /* ---------- palettes ---------- */
+const BUILT_IN_THEMES = new Set(listThemes().map((t) => t.name));
+/* Themes built in the Theme panel, kept per viewer as { [name]: spec } and registered before
+   the first render, so a stored `@theme` resolves. */
+const THEMES_KEY = 'wermaid:themes:v1';
+const themeStore = {
+  get() {
+    try {
+      const v = JSON.parse(localStorage.getItem(THEMES_KEY) || '{}');
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    } catch { return {}; }
+  },
+  set(v) { try { localStorage.setItem(THEMES_KEY, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+};
+const customSpecs = themeStore.get();
+/** Bumped whenever a theme is (re)defined, so the same source re-renders with the new look. */
+let themeRev = 0;
+function define(name, spec) {
+  try { defineTheme(name, spec); themeRev++; return null; } catch (err) { return err; }
+}
+// Parents before the themes that extend them.
+{
+  const pending = Object.keys(customSpecs).filter((n) => !BUILT_IN_THEMES.has(n));
+  for (let progress = true; pending.length && progress;) {
+    progress = false;
+    for (const name of [...pending]) {
+      const parent = customSpecs[name]?.extends;
+      if (parent !== name && pending.includes(parent)) continue;
+      pending.splice(pending.indexOf(name), 1);
+      progress = true;
+      define(name, customSpecs[name]);
+    }
+  }
+  for (const name of pending) define(name, customSpecs[name]); // a cycle: each falls back with a warning
+}
+
 const paletteSel = $('palette');
-for (const [name, t] of Object.entries(THEMES)) paletteSel.add(new Option(t.label, name));
-paletteSel.value = DEFAULT_THEME;
-const fontsReady = new Map();
-/** Mermaid measures text when it lays out, so a palette's font must be loaded first. */
+/** List every registered theme; a name the source uses but the page doesn't define still shows. */
+function syncPalette(current = paletteSel.value) {
+  const options = listThemes().map((t) => new Option(t.label, t.name));
+  if (current && !getTheme(current)) options.push(new Option(`${current} (not defined)`, current));
+  paletteSel.replaceChildren(...options);
+  paletteSel.value = current || DEFAULT_THEME;
+}
+syncPalette(DEFAULT_THEME);
+
+/** Mermaid measures text when it lays out, so a palette's font (and stylesheet) must be loaded first. */
+const fontsReady = new Map(), sheetsReady = new Map();
 function ensureFonts(name) {
-  const faces = THEMES[name]?.fonts || [];
-  if (!faces.length) return Promise.resolve();
-  if (!fontsReady.has(name)) {
-    fontsReady.set(name, Promise.race([
-      Promise.all(faces.map((f) => document.fonts.load(f))).catch(() => {}),
+  const theme = getTheme(name);
+  const faces = theme?.fonts || [], href = theme?.stylesheet;
+  if (!faces.length && !href) return Promise.resolve();
+  const key = `${faces.join('|')}\n${href || ''}`;
+  if (!fontsReady.has(key)) {
+    if (href && !sheetsReady.has(href)) {
+      const link = Object.assign(document.createElement('link'), { rel: 'stylesheet' });
+      sheetsReady.set(href, new Promise((resolve) => { link.onload = link.onerror = resolve; }));
+      link.href = href;
+      document.head.append(link);
+    }
+    const load = (f) => { try { return document.fonts.load(f); } catch { return null; } };
+    fontsReady.set(key, Promise.race([
+      Promise.all([href && sheetsReady.get(href), ...faces.map(load)]).catch(() => {}),
       new Promise((resolve) => setTimeout(resolve, 2500)),
     ]));
   }
-  return fontsReady.get(name);
+  return fontsReady.get(key);
 }
 paletteSel.addEventListener('change', () => {
   if (!diagram) return;
@@ -2784,6 +2937,7 @@ paletteSel.addEventListener('change', () => {
   else overrides.settings.theme = paletteSel.value;
   writeBack({ commit: true });
   refresh(srcEl.value);
+  if (!themePanel.hidden) followPalette(paletteSel.value);
 });
 
 /* ---------- source ⇄ diagram ---------- */
@@ -2815,7 +2969,8 @@ async function refresh(text) {
   const parsed = parseSource(text);
   store.set({ source: text, example: exSel.value });
   const palette = parsed.overrides.settings.theme || DEFAULT_THEME;
-  const renderKey = `${parsed.body}\u0000${palette}\u0000${isDark()}`;
+  const dark = renderDark();
+  const renderKey = `${parsed.body}\u0000${palette}\u0000${dark}\u0000${themeRev}`;
   if (diagram && renderKey === renderedBody) {
     ed.attach(diagram, parsed.overrides);
     showState();
@@ -2837,7 +2992,7 @@ async function refresh(text) {
   let next;
   try {
     await ensureFonts(palette);
-    next = await wermaid.render(staging, text, { id: `wm-d${seq}`, theme: palette, dark: isDark() });
+    next = await wermaid.render(staging, text, { id: `wm-d${seq}`, theme: palette, dark });
   } catch (err) {
     staging.remove();
     if (seq !== renderSeq) return;
@@ -2848,11 +3003,13 @@ async function refresh(text) {
   for (const child of [...sheet.children]) if (child !== staging) child.remove();
   diagram = next;
   renderedBody = renderKey;
-  renderedDark = isDark();
-  $('palette').value = palette;
-  showCredit(palette);
-  // The drawing sits on its palette's own ground (the page's paper for Wermaid).
-  wrap.style.setProperty('--sheet-bg', palette === DEFAULT_THEME ? 'transparent' : diagram.background || 'transparent');
+  renderedDark = dark;
+  syncPalette(palette);
+  showCredit(diagram.theme);
+  // The drawing sits on its palette's own ground (the page's paper for Wermaid, unless the
+  // theme builder is previewing the other variant).
+  const onPaper = diagram.theme === DEFAULT_THEME && dark === isDark();
+  wrap.style.setProperty('--sheet-bg', onPaper ? 'transparent' : diagram.background || 'transparent');
   sheet.classList.toggle('editable', diagram.supported);
   ed.attach(diagram, diagram.overrides);
   showState();
@@ -3328,7 +3485,7 @@ const slug = () => exampleName().toLowerCase().replace(/[^a-z0-9]+/g, '-').repla
 /** Credit the palette's source while it's in use (see THEMES[name].credit). */
 function showCredit(name) {
   const el = $('palette-credit');
-  const credit = THEMES[name]?.credit;
+  const credit = getTheme(name)?.credit;
   el.hidden = !credit;
   el.replaceChildren();
   if (!credit) return;
@@ -3419,6 +3576,396 @@ exportMenu.addEventListener('keydown', (ev) => {
 });
 document.addEventListener('pointerdown', (ev) => {
   if (!exportMenu.hidden && !ev.target.closest('.menu-wrap')) setMenu(false);
+});
+
+/* ---------- theme builder ---------- */
+/*
+ * The panel edits one theme spec at a time (`builder`). Every change defines the theme, keeps
+ * it in localStorage, points the diagram's block at it with `@theme`, and re-renders.
+ * Fields left empty show what the theme will use as placeholders: inherited values in the light
+ * column, values derived from light in the dark column. "Start from" sets `extends`.
+ */
+const themePanel = $('theme-panel'), themeBtn = $('theme-btn'), nameEl = $('theme-name');
+const builder = { name: '', spec: {} };
+const SCRATCH_THEME = 'wermaid-builder-scratch';
+const THEME_SECTIONS = [
+  { group: 'colors', title: 'Colours', fields: [
+    ['background', 'Background'], ['text', 'Text'], ['muted', 'Muted text'], ['line', 'Lines'],
+    ['nodeFill', 'Node fill'], ['nodeBorder', 'Node border'], ['groupFill', 'Group fill'],
+    ['groupBorder', 'Group border'], ['labelBackground', 'Label ground'],
+  ].map(([key, label]) => ({ key, label, kind: 'color', dark: true })) },
+  { group: 'font', title: 'Font', fields: [
+    { key: 'family', label: 'Family', kind: 'family', dark: true },
+    { key: 'size', label: 'Size', kind: 'number', min: 6, max: 48, step: 1, dark: true },
+    { key: 'weight', label: 'Weight', kind: 'number', min: 100, max: 900, step: 100, dark: true },
+    { key: 'stylesheet', label: 'Stylesheet', kind: 'url' },
+  ] },
+  { group: 'shapes', title: 'Shapes', fields: [
+    { key: 'radius', label: 'Corners', kind: 'number', min: 0, max: 40, step: 1, dark: true },
+    { key: 'borderWidth', label: 'Border', kind: 'number', min: 0, max: 8, step: 0.5, dark: true },
+  ] },
+  { group: 'edges', title: 'Edges', fields: [
+    { key: 'style', label: 'Look', kind: 'select' },
+    { key: 'radius', label: 'Bend radius', kind: 'number', min: 0, max: 40, step: 1 },
+    { key: 'width', label: 'Thickness', kind: 'number', min: 0.5, max: 8, step: 0.5, dark: true },
+  ] },
+  { group: 'spacing', title: 'Spacing', fields: [
+    { key: 'node', label: 'Between shapes', kind: 'number', min: 0, max: 400, step: 4, dark: true },
+    { key: 'rank', label: 'Between ranks', kind: 'number', min: 0, max: 400, step: 4, dark: true },
+    { key: 'padding', label: 'Inside shapes', kind: 'number', min: 0, max: 100, step: 1, dark: true },
+  ] },
+];
+const EDGE_LOOK_LABELS = { mermaid: 'Mermaid curves', rounded: 'Rounded', orthogonal: 'Orthogonal', curved: 'Curved' };
+const SPEC_ORDER = ['label', 'extends', 'font', 'colors', 'shapes', 'edges', 'spacing', 'dark'];
+const VALID = {
+  // Colours land in Mermaid's theme variables and CSS, so only plain colour values pass.
+  color: (v) => /^(#[0-9a-f]{3,8}|(rgb|hsl)a?\([^();{}]*\)|[a-z]+)$/i.test(v) && CSS.supports('color', v),
+  family: (v) => /^[\w\s"',.-]+$/.test(v),
+  number: (v) => Number.isFinite(parseFloat(v)) && parseFloat(v) >= 0,
+  url: (v) => { try { return ['http:', 'https:'].includes(new URL(v, location.href).protocol); } catch { return false; } },
+  select: () => true,
+};
+const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v);
+const validName = (n) => THEME_NAME_RE.test(n) && !BUILT_IN_THEMES.has(n) && n !== SCRATCH_THEME;
+
+/** The spec as written out: empty fields and groups dropped, top-level keys in a fixed order. */
+function cleanSpec(spec) {
+  const clean = (v) => {
+    if (isPlain(v)) {
+      const o = {};
+      for (const [k, x] of Object.entries(v)) { const c = clean(x); if (c !== undefined) o[k] = c; }
+      return Object.keys(o).length ? o : undefined;
+    }
+    return v === '' || v == null || (typeof v === 'number' && !Number.isFinite(v)) ? undefined : v;
+  };
+  const out = clean(spec) || {};
+  return Object.fromEntries([...SPEC_ORDER.filter((k) => k in out), ...Object.keys(out).filter((k) => !SPEC_ORDER.includes(k))].map((k) => [k, out[k]]));
+}
+/** What a spec resolves to (inherited and derived values filled in), without registering it. */
+function resolveTheme(spec) {
+  try { defineTheme(SCRATCH_THEME, spec); return THEMES[SCRATCH_THEME].spec; } catch { return null; } finally { delete THEMES[SCRATCH_THEME]; }
+}
+function uniqueName(base) {
+  let name = base, i = 2;
+  while (getTheme(name) || Object.hasOwn(customSpecs, name)) name = `${base}-${i++}`;
+  return name;
+}
+/** The chain of themes `name` builds on. */
+function ancestors(name) {
+  const seen = [];
+  for (let n = customSpecs[name]?.extends; n && !seen.includes(n); n = customSpecs[n]?.extends) seen.push(n);
+  return seen;
+}
+const say = (text, warn = false) => { const m = $('theme-msg'); m.textContent = text; m.classList.toggle('warn', warn); };
+
+/* The grid: one row per field, light and dark side by side. */
+const themeInputs = [];
+function themeControl(group, f, variant) {
+  const input = f.kind === 'select' ? document.createElement('select') : document.createElement('input');
+  input.id = `theme-${variant}-${group}-${f.key}`;
+  input.setAttribute('aria-label', `${f.label}, ${variant}`);
+  if (f.kind === 'select') {
+    input.className = 'pick small';
+    input.add(new Option('Inherited', ''));
+    for (const [v, t] of Object.entries(EDGE_LOOK_LABELS)) input.add(new Option(t, v));
+  } else {
+    input.className = 'tp-input';
+    Object.assign(input, { type: f.kind === 'number' ? 'number' : 'text', spellcheck: false, autocomplete: 'off' });
+    if (f.kind === 'number') Object.assign(input, { min: f.min, max: f.max, step: f.step });
+  }
+  const entry = { group, key: f.key, variant, kind: f.kind, el: input };
+  themeInputs.push(entry);
+  input.addEventListener(f.kind === 'select' ? 'change' : 'input', () => onThemeField(entry));
+  if (f.kind !== 'color') return input;
+  const cell = document.createElement('div');
+  cell.className = 'tp-color';
+  const swatch = Object.assign(document.createElement('input'), { type: 'color' });
+  swatch.setAttribute('aria-label', `Pick ${f.label.toLowerCase()}, ${variant}`);
+  swatch.addEventListener('input', () => { input.value = swatch.value; onThemeField(entry); });
+  entry.swatch = swatch;
+  cell.append(swatch, input);
+  return cell;
+}
+for (const section of THEME_SECTIONS) {
+  const grid = $('theme-grid');
+  grid.append(Object.assign(document.createElement('h3'), { textContent: section.title }));
+  for (const f of section.fields) {
+    grid.append(Object.assign(document.createElement('span'), { className: 'k', textContent: f.label }));
+    // Fields the dark variant doesn't take (stylesheet, edge look, bend radius) use both columns.
+    const light = themeControl(section.group, f, 'light');
+    if (!f.dark) light.classList.add('wide');
+    grid.append(light);
+    if (f.dark) grid.append(themeControl(section.group, f, 'dark'));
+  }
+}
+const slot = (spec, { variant, group }, create) => {
+  const base = variant === 'dark' ? (create ? (spec.dark ??= {}) : spec.dark) : spec;
+  return create ? (base[group] ??= {}) : base?.[group];
+};
+
+/** Turn any CSS colour into #rrggbb for a colour swatch. */
+const swatchCtx = document.createElement('canvas').getContext('2d');
+function swatchHex(v) {
+  if (!v || !VALID.color(v)) return null;
+  swatchCtx.fillStyle = '#000';
+  swatchCtx.fillStyle = v;
+  const s = swatchCtx.fillStyle;
+  if (s.startsWith('#')) return s;
+  const [r, g, b] = s.match(/[\d.]+/g).map(Number);
+  return `#${[r, g, b].map((n) => Math.round(n).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Put the builder's spec into the controls. */
+function fillThemePanel() {
+  nameEl.value = builder.name;
+  nameEl.removeAttribute('aria-invalid');
+  $('theme-label').value = builder.spec.label ?? '';
+  for (const entry of themeInputs) {
+    entry.el.value = slot(builder.spec, entry)?.[entry.key] ?? '';
+    entry.el.removeAttribute('aria-invalid');
+  }
+  showThemeDerived();
+}
+/** Placeholders, swatches, the Start from list and the spacing note, from the resolved spec. */
+function showThemeDerived() {
+  const spec = cleanSpec(builder.spec);
+  const resolved = resolveTheme(spec);
+  $('theme-label').placeholder = builder.name;
+  // Start from: Wermaid, Pele and custom themes that don't already build on this one.
+  const ext = $('theme-extends');
+  const parents = listThemes().filter((t) => t.name !== 'mermaid' && t.name !== builder.name && !ancestors(t.name).includes(builder.name));
+  const options = parents.map((t) => new Option(t.label, t.name));
+  const current = spec.extends || DEFAULT_THEME;
+  if (!parents.some((t) => t.name === current)) options.push(new Option(`${current} (not defined)`, current));
+  ext.replaceChildren(...options);
+  ext.value = current;
+  for (const entry of themeInputs) {
+    const { group, key, variant, el } = entry;
+    const own = slot(resolved || {}, entry)?.[key];
+    const shown = variant === 'light' || group === 'colors' ? own : own ?? resolved?.[group]?.[key];
+    if (entry.kind === 'select') {
+      const inherited = getTheme(current)?.spec?.edges?.style || 'mermaid';
+      el.options[0].textContent = `Inherited (${EDGE_LOOK_LABELS[inherited].toLowerCase()})`;
+    } else {
+      el.placeholder = shown == null ? (entry.kind === 'url' ? 'none' : '') : String(shown);
+    }
+    if (entry.swatch) {
+      const hex = swatchHex(el.value.trim()) || swatchHex(el.placeholder);
+      if (hex) entry.swatch.value = hex;
+    }
+  }
+  const spacing = [spec.spacing, spec.dark?.spacing].some((s) => s && Object.keys(s).length);
+  $('theme-spacing-note').hidden = !spacing;
+}
+
+function onThemeField(entry) {
+  const raw = entry.el.value.trim();
+  const valid = !entry.el.validity?.badInput && (raw === '' || VALID[entry.kind](raw));
+  if (valid) entry.el.removeAttribute('aria-invalid'); else entry.el.setAttribute('aria-invalid', 'true');
+  if (!valid) return;
+  const group = slot(builder.spec, entry, true);
+  if (raw === '') delete group[entry.key];
+  else group[entry.key] = entry.kind === 'number' ? parseFloat(raw) : raw;
+  scheduleThemeApply();
+}
+$('theme-label').addEventListener('input', (ev) => {
+  builder.spec.label = ev.target.value.trim() || undefined;
+  scheduleThemeApply();
+});
+$('theme-extends').addEventListener('change', (ev) => {
+  builder.spec.extends = ev.target.value;
+  applyTheme();
+});
+
+let themeTimer = 0;
+function scheduleThemeApply() {
+  clearTimeout(themeTimer);
+  themeTimer = setTimeout(applyTheme, 150);
+}
+/** Define the theme being built, keep it, and show it on the diagram. */
+function applyTheme() {
+  clearTimeout(themeTimer);
+  const { name } = builder;
+  if (!validName(name)) { say('Name the theme first: lowercase letters, digits and dashes, starting with a letter.', true); return; }
+  const spec = cleanSpec(builder.spec);
+  const err = define(name, spec);
+  if (err) { say(err.message, true); return; }
+  customSpecs[name] = spec;
+  // Themes that extend this one resolved it when they were defined, so define them again.
+  const redefine = (parent, seen) => {
+    for (const [n, s] of Object.entries(customSpecs)) {
+      if (s?.extends === parent && !seen.has(n)) { seen.add(n); define(n, s); redefine(n, seen); }
+    }
+  };
+  redefine(name, new Set([name]));
+  themeStore.set(customSpecs);
+  say('');
+  showThemeDerived();
+  useTheme(name);
+}
+/** Point the diagram's block at `name` and re-render. */
+function useTheme(name) {
+  syncPalette(name);
+  if (!diagram) return;
+  const { overrides } = ed;
+  overrides.settings = overrides.settings || {};
+  if (overrides.settings.theme !== name) {
+    overrides.settings.theme = name;
+    writeBack({ commit: true });
+  }
+  refresh(srcEl.value);
+}
+
+function editTheme(name) {
+  builder.name = name;
+  builder.spec = structuredClone(customSpecs[name]);
+  fillThemePanel();
+}
+/** A new, not yet defined theme starting from `from` (named after it when `from` isn't defined anywhere). */
+function newTheme(from) {
+  const undefinedName = from && !getTheme(from) && validName(from);
+  builder.name = undefinedName ? from : uniqueName('my-theme');
+  builder.spec = { extends: !undefinedName && from && from !== 'mermaid' && getTheme(from) ? from : DEFAULT_THEME };
+  fillThemePanel();
+}
+/** The panel edits the diagram's palette when it's one built here, else starts a theme from it. */
+function followPalette(name) {
+  if (Object.hasOwn(customSpecs, name)) editTheme(name); else newTheme(name);
+}
+
+nameEl.addEventListener('input', () => {
+  const v = nameEl.value.trim();
+  if (!v || validName(v)) nameEl.removeAttribute('aria-invalid'); else nameEl.setAttribute('aria-invalid', 'true');
+});
+/* A new name renames the theme (or, if it's another theme built here, switches to editing that one). */
+nameEl.addEventListener('change', () => {
+  const next = nameEl.value.trim(), prev = builder.name;
+  if (next === prev) return;
+  if (!validName(next)) {
+    say(BUILT_IN_THEMES.has(next) ? `“${next}” is a built-in theme. Choose another name.` : 'Theme names are lowercase letters, digits and dashes, starting with a letter.', true);
+    nameEl.value = prev;
+    nameEl.removeAttribute('aria-invalid');
+    return;
+  }
+  say('');
+  if (Object.hasOwn(customSpecs, next)) { editTheme(next); useTheme(next); return; }
+  builder.name = next;
+  if (Object.hasOwn(customSpecs, prev)) {
+    delete customSpecs[prev];
+    for (const s of Object.values(customSpecs)) if (s?.extends === prev) s.extends = next;
+    applyTheme();
+  } else {
+    showThemeDerived();
+  }
+});
+
+function setThemePanel(open) {
+  themePanel.hidden = !open;
+  document.querySelector('main').classList.toggle('theming', open);
+  themeBtn.setAttribute('aria-expanded', String(open));
+  if (open) {
+    followPalette(parseSource(srcEl.value).overrides.settings.theme || DEFAULT_THEME);
+    showPreviewMode();
+  } else {
+    if (themePanel.contains(document.activeElement)) themeBtn.focus();
+    setPreview(null);
+  }
+}
+themeBtn.addEventListener('click', () => setThemePanel(themePanel.hidden));
+$('theme-close').addEventListener('click', () => setThemePanel(false));
+$('theme-new').addEventListener('click', () => newTheme(Object.hasOwn(customSpecs, builder.name) ? builder.name : builder.spec.extends));
+
+/* Preview either variant; closing the panel hands the diagram back to the page's mode. */
+function showPreviewMode() {
+  $('theme-mode-light').setAttribute('aria-pressed', String(!renderDark()));
+  $('theme-mode-dark').setAttribute('aria-pressed', String(renderDark()));
+}
+function setPreview(dark) {
+  previewDark = dark;
+  showPreviewMode();
+  rethemed();
+}
+$('theme-mode-light').addEventListener('click', () => setPreview(false));
+$('theme-mode-dark').addEventListener('click', () => setPreview(true));
+
+/* Copy code / Copy JSON. If the clipboard is blocked, the text lands in the Paste box, selected. */
+const themeJson = () => JSON.stringify(cleanSpec(builder.spec), null, 2);
+async function copyTheme(text, done) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done);
+  } catch {
+    const box = $('theme-paste');
+    box.value = text;
+    box.focus();
+    box.select();
+    toast('Copy was blocked. The text is in the Paste box, selected, so you can copy it yourself.');
+  }
+}
+$('theme-copy-code').addEventListener('click', () => copyTheme(`defineTheme('${builder.name}', ${themeJson()});`, 'Theme code copied'));
+$('theme-copy-json').addEventListener('click', () => copyTheme(themeJson(), 'Theme JSON copied'));
+
+/**
+ * JSON from a JavaScript object literal, without evaluating it: quotes bare keys, turns
+ * single-quoted strings into JSON strings, drops comments and trailing commas.
+ */
+function looseJson(s) {
+  let out = '';
+  for (let i = 0; i < s.length;) {
+    const c = s[i];
+    if (c === '"' || c === "'") {
+      let j = i + 1, raw = '';
+      while (j < s.length && s[j] !== c) { if (s[j] === '\\') raw += s[j++]; raw += s[j++]; }
+      out += c === '"' ? `"${raw}"` : JSON.stringify(raw.replace(/\\(['"\\])/g, '$1'));
+      i = j + 1;
+    } else if (s.startsWith('//', i)) {
+      const j = s.indexOf('\n', i);
+      i = j < 0 ? s.length : j;
+    } else if (s.startsWith('/*', i)) {
+      const j = s.indexOf('*/', i + 2);
+      i = j < 0 ? s.length : j + 2;
+    } else if (/[A-Za-z_$]/.test(c)) {
+      const word = s.slice(i).match(/^[\w$]+/)[0];
+      const isKey = /^\s*:/.test(s.slice(i + word.length));
+      out += isKey ? JSON.stringify(word) : word;
+      i += word.length;
+    } else if (c === '}' || c === ']') {
+      out = out.replace(/,\s*$/, '') + c;
+      i++;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+/** Read pasted text: a theme spec as JSON, or a `defineTheme('name', { … })` call. */
+function parseThemeText(text) {
+  const t = text.trim();
+  const call = t.match(/^defineTheme\s*\(\s*(['"`])([^'"`]*)\1\s*,([\s\S]*)\)\s*;?$/);
+  const spec = JSON.parse(looseJson(call ? call[3] : t));
+  if (!isPlain(spec)) throw new TypeError('not an object');
+  return { name: call?.[2], spec };
+}
+$('theme-import').addEventListener('click', () => {
+  let parsed;
+  try { parsed = parseThemeText($('theme-paste').value); } catch {
+    say('Couldn’t read that. Paste a theme’s JSON, or a defineTheme(\'name\', { … }) call.', true);
+    return;
+  }
+  // Bare JSON is named after its label.
+  const fromLabel = String(parsed.spec.label ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^[^a-z]+|-+$/g, '');
+  let name = parsed.name ?? (fromLabel || 'imported');
+  if (!validName(name)) name = uniqueName(THEME_NAME_RE.test(name) ? `${name}-custom` : 'imported');
+  const prev = { name: builder.name, spec: builder.spec };
+  builder.name = name;
+  builder.spec = structuredClone(parsed.spec);
+  const err = define(name, cleanSpec(builder.spec));
+  if (err) { Object.assign(builder, prev); say(err.message, true); return; }
+  fillThemePanel();
+  applyTheme();
+  $('theme-paste').value = '';
+  say(`Imported ${name}.`);
 });
 
 /* ---------- boot ---------- */

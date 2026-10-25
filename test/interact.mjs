@@ -166,5 +166,58 @@ for (const v of ['1', '2', '3', '4']) {
   ok(`example ${v} renders`, info.svgs === 1, info);
   await p.screenshot({ path: SHOT + `ex${v}.png` });
 }
+// 13. theme builder: build a theme, preview it, copy it, keep it, import one, preview dark
+await p.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
+await p.selectOption('#example', '0'); await p.waitForTimeout(900);
+const ready = () => p.waitForFunction(() => window.READY, null, { timeout: 30000 });
+const settle = () => p.waitForTimeout(900);
+const setColor = async (key, value) => { await p.fill(`#theme-light-colors-${key}`, value); await settle(); };
+const nodeFill = () => p.$eval('#sheet g.node > rect.label-container', (n) => getComputedStyle(n).fill);
+const copyCode = async () => { await p.click('#theme-copy-code'); return p.evaluate(() => navigator.clipboard.readText()); };
+const paletteOptions = () => p.$$eval('#palette option', (os) => os.map((o) => o.value));
+const openPanel = async () => { if (await p.$eval('#theme-panel', (el) => el.hidden)) await p.click('#theme-btn'); };
+const importTheme = async (text, name) => {
+  await openPanel();
+  await p.fill('#theme-paste', text); await p.click('#theme-import');
+  await p.waitForFunction((n) => document.getElementById('theme-name').value === n, name, { timeout: 5000 }).catch(() => {});
+  await settle();
+};
+const sheetIsDark = () => p.evaluate(() => {
+  const lum = (css) => { const [r, g, b] = css.match(/[\d.]+/g).map(Number); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; };
+  const ground = getComputedStyle(document.getElementById('sheet-wrap')).backgroundColor;
+  const fill = getComputedStyle(document.querySelector('#sheet g.node > rect.label-container')).fill;
+  return lum(ground) < 0.3 && lum(fill) < 0.3;
+});
+await p.click('#theme-btn'); await p.fill('#theme-name', 'acme'); await setColor('nodeFill', '#ffeedd');
+ok('theme builder previews on the diagram', await nodeFill() === 'rgb(255, 238, 221)', await nodeFill());
+ok('theme builder writes @theme', /%% @theme acme/.test(await src()), (await src()).split('%% @layout')[1]);
+const code = await copyCode();
+ok('copy code is a defineTheme call', /^defineTheme\('acme', \{[\s\S]*"nodeFill": "#ffeedd"[\s\S]*\}\);$/.test(code), code);
+await p.click('#theme-copy-json');
+const json = await p.evaluate(() => navigator.clipboard.readText());
+ok('copy JSON is the spec alone', (() => { try { return JSON.parse(json).colors.nodeFill === '#ffeedd' && json === code.slice("defineTheme('acme', ".length, -2); } catch { return false; } })(), json);
+ok('derived dark values show as placeholders', /^#/.test(await p.$eval('#theme-dark-colors-nodeFill', (i) => i.placeholder)) && await p.$eval('#theme-dark-colors-nodeFill', (i) => i.value) === '');
+const spacingNote = async () => (await p.isVisible('#theme-spacing-note')) && (await p.textContent('#theme-spacing-note')) === "Spacing changes Mermaid's layout, so nudged shapes move with it.";
+ok('no spacing note before spacing changes', !(await spacingNote()));
+await p.fill('#theme-light-spacing-node', '80'); await settle();
+ok('a spacing change says nudges move with the layout', await spacingNote());
+await p.reload(); await ready();
+ok('themes survive a reload', (await paletteOptions()).includes('acme'), await paletteOptions());
+ok('a stored theme renders after a reload', await nodeFill() === 'rgb(255, 238, 221)', await nodeFill());
+await importTheme(`{ "label": "Beta", "colors": { "nodeFill": "#ddeeff" } }`, 'beta');
+ok('pasted JSON imports a theme', (await paletteOptions()).includes('beta'), await paletteOptions());
+await importTheme(`defineTheme('gamma', {\n  label: 'Gamma', // a comment\n  colors: { nodeFill: '#eeddff', },\n});`, 'gamma');
+ok('a pasted defineTheme call imports a theme', (await paletteOptions()).includes('gamma') && /%% @theme gamma/.test(await src()) && await nodeFill() === 'rgb(238, 221, 255)', [await paletteOptions(), await nodeFill()]);
+await p.click('#theme-mode-dark'); await settle();
+ok('dark preview uses the dark variant', await sheetIsDark());
+await p.click('#theme-mode-light'); await settle();
+ok('light preview uses the light variant', !(await sheetIsDark()));
+await p.$eval('#src', (t) => { t.value = t.value.replace(/%% @theme \w+/, '%% @theme nowhere'); t.dispatchEvent(new Event('input')); });
+await settle();
+ok('an undefined @theme shows in the palette picker', await p.$eval('#palette', (s) => s.selectedOptions[0]?.textContent) === 'nowhere (not defined)');
+await p.selectOption('#edge-style', 'mermaid'); await p.waitForTimeout(200);
+ok('edge picker offers Mermaid curves', /%% @edges mermaid/.test(await src()));
+await p.selectOption('#edge-style', ''); await p.waitForTimeout(200);
+await p.screenshot({ path: SHOT + 'theme-builder.png' });
 console.log(R.join('\n'));
 await b.close();
