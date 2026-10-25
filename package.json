@@ -18,14 +18,15 @@
     "build": "node build.mjs",
     "serve": "node test/serve.mjs . 8765",
     "link-mermaid": "ln -sfn node_modules/mermaid/dist mermaid-dist",
-    "test": "node test/run.mjs test/m1.html && node test/interact.mjs && node test/export.mjs && node test/embed.mjs"
+    "test": "node test/run.mjs test/m1.html && node test/run.mjs test/pele.html && node test/interact.mjs && node test/export.mjs && node test/embed.mjs"
   },
   "peerDependencies": {
     "mermaid": "^11.0.0"
   },
   "devDependencies": {
     "mermaid": "11.16.1",
-    "playwright": "^1.50.0"
+    "playwright": "^1.50.0",
+    "pele": "^1.10.0"
   },
   "keywords": [
     "mermaid",

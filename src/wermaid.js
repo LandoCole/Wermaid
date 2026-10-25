@@ -4,6 +4,7 @@
  * Pipeline:
  *   1. Split the source into the Mermaid body and the `%% @layout … %% @end` block.
  *   2. Render the body with stock Mermaid (its own layout engine, untouched).
+ *      (Experimental: or with Pele, pele.run; see `createWermaid`.)
  *   3. Adapter: read the baseline scene — structure from Mermaid's diagram data
  *      (node ids, parents, edges), geometry from the rendered SVG.
  *   4. Apply overrides (pins, nudges, sizes, edge waypoints, label offsets),
@@ -332,6 +333,87 @@ function curveLinear(pts) {
   return pts.map((p, i) => `${i ? 'L' : 'M'}${r1(p.x)},${r1(p.y)}`).join('');
 }
 
+/**
+ * Pele's edge look: straight runs, with each sideways jog between two parallel runs drawn
+ * as an S-bend whose ends lie along the runs. Other corners are rounded; a slanted
+ * segment becomes an S-bend along its longer axis.
+ */
+function peleCurve(pts, radius = 8) {
+  const f = (n) => Math.round(n * 100) / 100;
+  const p = simplify(pts).map((q) => ({ x: q.x, y: q.y }));
+  const axis = (a, b) => (eq(a.y, b.y) ? 'h' : eq(a.x, b.x) ? 'v' : null);
+  const sign = (a, b) => Math.sign(b.x - a.x + b.y - a.y);
+  // Jogs: an interior segment square to its neighbours, which run the same way.
+  for (let k = 1; k + 2 < p.length; k++) {
+    const a = p[k - 1], b = p[k], c = p[k + 1], d = p[k + 2];
+    const run = axis(a, b);
+    if (!run || run !== axis(c, d) || axis(b, c) === run || !axis(b, c) || sign(a, b) !== sign(c, d)) continue;
+    // A run shared with another jog gives each half; an end run can go almost all to the
+    // bend, as Pele's do, keeping a short straight lead into the arrowhead.
+    const lin = Math.hypot(b.x - a.x, b.y - a.y) / (k === 1 ? 1 : 2);
+    const lout = k + 3 === p.length ? Math.max(0, Math.hypot(d.x - c.x, d.y - c.y) - 6) : Math.hypot(d.x - c.x, d.y - c.y) / 2;
+    const jog = Math.hypot(c.x - b.x, c.y - b.y);
+    const s = Math.min(lin, lout, Math.max(24, jog * 1.6)) * sign(a, b);
+    if (run === 'h') { b.x -= s; c.x += s; } else { b.y -= s; c.y += s; }
+    c.bend = run;
+  }
+  let d = `M${f(p[0].x)},${f(p[0].y)}`;
+  for (let i = 1; i < p.length; i++) {
+    const a = p[i - 1], b = p[i], n = p[i + 1];
+    const bend = b.bend || (axis(a, b) ? null : Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v');
+    if (bend === 'h') {
+      const mx = (a.x + b.x) / 2;
+      d += `C${f(mx)},${f(a.y)},${f(mx)},${f(b.y)},${f(b.x)},${f(b.y)}`;
+    } else if (bend === 'v') {
+      const my = (a.y + b.y) / 2;
+      d += `C${f(a.x)},${f(my)},${f(b.x)},${f(my)},${f(b.x)},${f(b.y)}`;
+    } else if (n && !n.bend && axis(b, n) && axis(a, b) !== axis(b, n)) {
+      const lin = Math.hypot(b.x - a.x, b.y - a.y), lout = Math.hypot(n.x - b.x, n.y - b.y);
+      const r = Math.min(radius, lin / 2, lout / 2);
+      const u = { x: b.x - ((b.x - a.x) / lin) * r, y: b.y - ((b.y - a.y) / lin) * r };
+      const v = { x: b.x + ((n.x - b.x) / lout) * r, y: b.y + ((n.y - b.y) / lout) * r };
+      d += `L${f(u.x)},${f(u.y)}Q${f(b.x)},${f(b.y)},${f(v.x)},${f(v.y)}`;
+    } else {
+      d += `L${f(b.x)},${f(b.y)}`;
+    }
+  }
+  return d;
+}
+
+/**
+ * Vertices of an absolute M/L/H/V/C/Q path, plus the unit direction it leaves its first
+ * point in and arrives at its last point in (for placing arrowheads).
+ */
+function pathGeometry(d) {
+  const toks = d.match(/[MLHVCQZ]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || [];
+  const pts = [];
+  let i = 0, cmd = null, cur = null, startDir = null, endDir = null;
+  const num = () => +toks[i++];
+  const unit = (a, b) => {
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    return l < 1e-6 ? null : { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+  };
+  const seg = (ctrls, to) => {
+    const chain = [cur, ...ctrls, to];
+    startDir ??= chain.slice(1).map((q) => unit(cur, q)).find(Boolean) ?? null;
+    endDir = chain.slice(0, -1).reverse().map((q) => unit(q, to)).find(Boolean) ?? endDir;
+    cur = to;
+    pts.push(to);
+  };
+  while (i < toks.length) {
+    if (/[a-z]/i.test(toks[i])) cmd = toks[i++].toUpperCase();
+    if (cmd === 'Z') { cmd = null; continue; }
+    if (cmd === 'M') { cur = { x: num(), y: num() }; pts.push(cur); cmd = 'L'; }
+    else if (cmd === 'L') seg([], { x: num(), y: num() });
+    else if (cmd === 'H') seg([], { x: num(), y: cur.y });
+    else if (cmd === 'V') seg([], { x: cur.x, y: num() });
+    else if (cmd === 'C') seg([{ x: num(), y: num() }, { x: num(), y: num() }], { x: num(), y: num() });
+    else if (cmd === 'Q') seg([{ x: num(), y: num() }], { x: num(), y: num() });
+    else i++;
+  }
+  return { pts, startDir, endDir };
+}
+
 const DIAMONDS = new Set(['diamond', 'question', 'diam', 'decision', 'choice']);
 const ELLIPSES = new Set(['circle', 'circ', 'doublecircle', 'dbl-circ', 'ellipse', 'stateStart', 'stateEnd', 'filled-circle', 'fr-circ', 'small-circle', 'sm-circ', 'start', 'stop']);
 
@@ -370,16 +452,18 @@ function sidePort(box, side, off) {
 /**
  * Auto route between two boxes: an orthogonal "Z" through the midpoint, drawn
  * with the same curve as Mermaid so it reads like dagre's output.
- * `off` separates parallel edges between the same pair of shapes.
+ * `off` separates parallel edges between the same pair of shapes. `prefer` ('h' or 'v')
+ * picks that axis whenever the shapes have room along it, as a layered layout would.
  */
-function autoRoute(a, b, off = 0) {
+function autoRoute(a, b, off = 0, prefer = null) {
   const gapX = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
   const gapY = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
   if (gapX < 0 && gapY < 0) {
     // Overlapping boxes: straight center line, clipped by the shapes.
     return [boundaryToward(a, a.shape, b), boundaryToward(b, b.shape, a)];
   }
-  if (gapX >= gapY) {
+  const horizontal = prefer === 'h' && gapX >= 12 ? true : prefer === 'v' && gapY >= 12 ? false : gapX >= gapY;
+  if (horizontal) {
     const right = b.cx > a.cx;
     const s = sidePort(a, right ? 'r' : 'l', off);
     const t = sidePort(b, right ? 'l' : 'r', off);
@@ -899,23 +983,7 @@ function readScene(svg, svgId, data, direction) {
       shapeEls: [...el.children].filter((c) => !c.matches('.label, g.label, text, foreignObject')),
     });
   }
-  // Cluster membership + padding between a cluster's frame and its contents.
-  for (const c of scene.clusters.values()) {
-    if (c.parent && !scene.clusters.has(c.parent)) c.parent = null;
-    if (c.parent) scene.clusters.get(c.parent).children.push({ type: 'cluster', id: c.id });
-  }
-  for (const n of scene.nodes.values()) {
-    if (n.parent) scene.clusters.get(n.parent).children.push({ type: 'node', id: n.id });
-  }
-  for (const c of scene.clusters.values()) {
-    const inner = union(c.children.map((ch) => (ch.type === 'node' ? scene.nodes : scene.clusters).get(ch.id).box));
-    c.pad = inner
-      ? { l: inner.x - c.box.x, t: inner.y - c.box.y, r: c.box.x + c.box.w - (inner.x + inner.w), b: c.box.y + c.box.h - (inner.y + inner.h) }
-      : null;
-    c.depth = 0;
-    for (let p = c.parent; p; p = scene.clusters.get(p).parent) c.depth++;
-    if (c.labelEl) c.labelBox = bboxInRoot(root, c.labelEl);
-  }
+  linkClusters(scene, root);
   for (const e of data.edges) {
     const pathEl = svg.querySelector(`path[data-edge][data-id="${cssId(e.id)}"]`) || svg.querySelector(`#${cssId(`${svgId}-${e.id}`)}`);
     if (!pathEl) continue;
@@ -957,6 +1025,158 @@ function readScene(svg, svgId, data, direction) {
   scene.viewBox = svg.getAttribute('viewBox');
   scene.style = svg.getAttribute('style');
   return scene;
+}
+
+/** Cluster membership, nesting depth and the padding between each frame and its contents. */
+function linkClusters(scene, root) {
+  for (const c of scene.clusters.values()) {
+    if (c.parent && !scene.clusters.has(c.parent)) c.parent = null;
+    if (c.parent) scene.clusters.get(c.parent).children.push({ type: 'cluster', id: c.id });
+  }
+  for (const n of scene.nodes.values()) {
+    if (n.parent) scene.clusters.get(n.parent).children.push({ type: 'node', id: n.id });
+  }
+  for (const c of scene.clusters.values()) {
+    const inner = union(c.children.map((ch) => (ch.type === 'node' ? scene.nodes : scene.clusters).get(ch.id).box));
+    c.pad = inner
+      ? { l: inner.x - c.box.x, t: inner.y - c.box.y, r: c.box.x + c.box.w - (inner.x + inner.w), b: c.box.y + c.box.h - (inner.y + inner.h) }
+      : null;
+    c.depth = 0;
+    for (let p = c.parent; p; p = scene.clusters.get(p).parent) c.depth++;
+    if (c.labelEl) c.labelBox = bboxInRoot(root, c.labelEl);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Adapter: read the baseline scene from Pele                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pele's parse model, reduced to the shape Mermaid's `db.getData()` has:
+ * `{ nodes: [{ id, isGroup, parentId, shape }], edges: [{ id, start, end }] }`.
+ */
+function peleData(model) {
+  if (model.type === 'flowchart') {
+    const parentOf = new Map();
+    for (const sg of model.subgraphs) for (const id of sg.nodes) parentOf.set(id, sg.id);
+    return {
+      nodes: [
+        ...model.subgraphs.map((sg) => ({ id: sg.id, isGroup: true, parentId: parentOf.get(sg.id) })),
+        ...[...(model.nodes instanceof Map ? model.nodes.keys() : Object.keys(model.nodes))]
+          .filter((id) => !model.subgraphs.some((sg) => sg.id === id))
+          .map((id) => ({ id, isGroup: false, parentId: parentOf.get(id) })),
+      ],
+      edges: model.edges.map((e) => ({ id: e.id, start: e.start, end: e.end })),
+    };
+  }
+  if (model.type === 'state') return model.graph;
+  if (model.type === 'class') {
+    return {
+      nodes: [...model.classes.keys()].map((id) => ({ id, isGroup: false })),
+      edges: model.relations.map((r, i) => ({ id: `id_${r.id1}_${r.id2}_${i + 1}`, start: r.id1, end: r.id2 })),
+    };
+  }
+  return null;
+}
+
+/**
+ * Pele draws every node, cluster, edge and edge label as a `g` with a stable `data-id`.
+ * Edge paths carry no point data, so points come from the path itself; arrowheads are
+ * separate `.pele-marker` shapes, recorded here so re-routed edges can carry them along.
+ */
+function readScenePele(svg, data, direction) {
+  const scene = {
+    svg, svgId: null, direction, engine: 'pele',
+    nodes: new Map(), clusters: new Map(), edges: new Map(),
+    warnings: [],
+  };
+  const root = svg;
+  const byId = (cls, id) => svg.querySelector(`g.${cls}[data-id="${cssId(id)}"]`);
+  for (const n of data.nodes) {
+    if (!n.isGroup) continue;
+    const el = byId('pele-cluster', n.id);
+    if (!el) continue;
+    const labelEl = el.querySelector('.pele-cluster-label');
+    const frame = [...el.querySelectorAll('rect, path, polygon, line, ellipse')]
+      .map((s) => ({ el: s, box: bboxInRoot(root, s) }));
+    if (!frame.length) continue;
+    const box = union(frame.map((f) => f.box));
+    const c = { id: n.id, el, labelEl, frame, parent: n.parentId || null, box, children: [] };
+    // Flowchart titles sit at the top left; state titles are centred.
+    if (labelEl) c.labelAlign = Math.abs(bboxInRoot(root, labelEl).cx - box.cx) < 2 ? 'center' : 'left';
+    scene.clusters.set(n.id, c);
+  }
+  for (const n of data.nodes) {
+    if (n.isGroup) continue;
+    const el = byId('pele-node', n.id);
+    if (!el) continue;
+    const shape = n.shape || el.getAttribute('class').match(/\bpele-shape-(\S+)/)?.[1] || 'rect';
+    scene.nodes.set(n.id, {
+      id: n.id, el, shape,
+      parent: n.parentId && scene.clusters.has(n.parentId) ? n.parentId : null,
+      box: { ...bboxInRoot(root, el), shape },
+      shapeEls: [...el.children].filter((c) => !c.matches('text, foreignObject')),
+    });
+  }
+  linkClusters(scene, root);
+  for (const e of data.edges) {
+    const g = byId('pele-edge', e.id);
+    const pathEl = g?.querySelector('path:not(.pele-marker)');
+    if (!pathEl) continue;
+    const m = toRoot(root, pathEl);
+    const geo = pathGeometry(pathEl.getAttribute('d') || '');
+    if (geo.pts.length < 2 || !geo.startDir || !geo.endDir) continue;
+    const first = geo.pts[0], last = geo.pts.at(-1);
+    // Each marker belongs to the nearer end; `pull` is how far it reaches past the line.
+    const pull = { start: 0, end: 0 };
+    const markers = [...g.querySelectorAll('.pele-marker')].map((el) => {
+      const b = el.getBBox();
+      const corners = [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]];
+      const mid = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+      const end = Math.hypot(mid.x - last.x, mid.y - last.y) <= Math.hypot(mid.x - first.x, mid.y - first.y) ? 'end' : 'start';
+      const anchor = end === 'end' ? last : first;
+      const out = end === 'end' ? geo.endDir : { x: -geo.startDir.x, y: -geo.startDir.y };
+      pull[end] = Math.max(pull[end], ...corners.map(([x, y]) => (x - anchor.x) * out.x + (y - anchor.y) * out.y));
+      return { el, end, anchor, angle: Math.atan2(out.y, out.x) };
+    });
+    // Points run boundary to boundary, like Mermaid's: push the ends out by the markers.
+    const pts = geo.pts.map((p) => ({ ...p }));
+    pts[0] = { x: first.x - geo.startDir.x * pull.start, y: first.y - geo.startDir.y * pull.start };
+    pts[pts.length - 1] = { x: last.x + geo.endDir.x * pull.end, y: last.y + geo.endDir.y * pull.end };
+    const toGlobal = (p) => { const q = new DOMPoint(p.x, p.y).matrixTransform(m); return { x: q.x, y: q.y }; };
+    const labelEl = byId('pele-edge-label', e.id);
+    const labelBox = labelEl && labelEl.textContent.trim() ? bboxInRoot(root, labelEl) : null;
+    scene.edges.set(e.id, {
+      id: e.id,
+      autoId: /^L[-_]/.test(e.id) || /^(id|edge)[\d_-]/.test(e.id),
+      start: e.start, end: e.end,
+      pathEl, local: m,
+      points: pts.map(toGlobal),
+      pull, markers,
+      labelEl: labelBox ? labelEl : null,
+      labelBox,
+      emptyLabelEl: null,
+    });
+  }
+  const titleEl = svg.querySelector('.pele-title');
+  scene.titleBox = titleEl ? bboxInRoot(root, titleEl) : null;
+  scene.viewBox = svg.getAttribute('viewBox');
+  scene.style = svg.getAttribute('style');
+  return scene;
+}
+
+/** Turn a marker so it sits on the end of a re-drawn path the way it sat on the original. */
+function placeMarker(mk, geo, mut, shift) {
+  if (shift) {
+    mut.set(mk.el, 'transform', prependTranslate(mk.el.getAttribute('transform'), shift.x, shift.y));
+    return;
+  }
+  const at = mk.end === 'end' ? geo.pts.at(-1) : geo.pts[0];
+  const out = mk.end === 'end' ? geo.endDir : geo.startDir && { x: -geo.startDir.x, y: -geo.startDir.y };
+  if (!at || !out) return;
+  const turn = ((Math.atan2(out.y, out.x) - mk.angle) * 180) / Math.PI;
+  const n = (v) => r1(v * 100) / 100;
+  mut.set(mk.el, 'transform', `translate(${n(at.x)}, ${n(at.y)}) rotate(${n(turn)}) translate(${n(-mk.anchor.x)}, ${n(-mk.anchor.y)})`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1050,7 +1270,8 @@ function applyOverrides(scene, overrides, mut) {
       box = rect(inner.x - c.pad.l, inner.y - c.pad.t, inner.w + c.pad.l + c.pad.r, inner.h + c.pad.t + c.pad.b);
       reshapeFrame(c, box, mut);
       if (c.labelEl) {
-        mut.set(c.labelEl, 'transform', prependTranslate(c.labelEl.getAttribute('transform'), box.cx - c.box.cx, box.y - c.box.y));
+        const dx = c.labelAlign === 'left' ? box.x - c.box.x : box.cx - c.box.cx;
+        mut.set(c.labelEl, 'transform', prependTranslate(c.labelEl.getAttribute('transform'), dx, box.y - c.box.y));
       }
       geom.changed = true;
     }
@@ -1063,7 +1284,9 @@ function applyOverrides(scene, overrides, mut) {
   }
 
   // Edges: untouched, translated, or re-routed.
-  const curve = scene.curve === 'linear' ? curveLinear : curveBasis;
+  const curve = scene.curve === 'linear' ? curveLinear : scene.curve === 'pele' ? peleCurve : curveBasis;
+  // Pele's own look (no `@edges` / `style`) is S-bends, so its routes are drawn with `curve` too.
+  const native = scene.curve === 'pele';
   // Parallel edges between the same two shapes (either direction) get separate lanes.
   const pairs = new Map();
   for (const e of scene.edges.values()) {
@@ -1114,12 +1337,21 @@ function applyOverrides(scene, overrides, mut) {
   for (const pl of plans) {
     if (pl.mode !== 'route') continue;
     if (pl.hasVia) {
-      const square = pl.look === 'orthogonal' || pl.look === 'rounded';
+      const square = pl.look === 'orthogonal' || pl.look === 'rounded' || native;
       pl.points = square ? elbowRoute(pl.a.box, pl.b.box, pl.ov.via) : viaRoute(pl.a.box, pl.b.box, pl.ov.via);
       pl.style = square ? 'orthogonal' : 'curve';
       continue;
     }
     const others = obstacles.filter((o) => o !== pl.a.box && o !== pl.b.box);
+    if (native && !pl.look) {
+      // Pele's look: a Z along the flow axis (drawn as an S-bend) when nothing is in its way.
+      const z = autoRoute(pl.a.box, pl.b.box, laneOffset(pl.e), /^(LR|RL)$/.test(scene.direction) ? 'h' : 'v');
+      if (!others.some((o) => polylineHitsBox(z, o))) {
+        pl.points = z;
+        pl.style = 'orthogonal';
+        continue;
+      }
+    }
     const obs = [...others];
     // Endpoint shapes block the route too, unless they're subgraphs the route starts inside.
     if (geom.nodes.has(pl.e.start)) obs.push(pl.a.box);
@@ -1152,6 +1384,7 @@ function applyOverrides(scene, overrides, mut) {
   for (const { e, mode, shift, points, style, look } of plans) {
     if (mode === 'shift') {
       mut.set(e.pathEl, 'transform', prependTranslate(e.pathEl.getAttribute('transform'), shift.x, shift.y));
+      for (const mk of e.markers || []) placeMarker(mk, null, mut, shift);
     } else if (mode === 'route') {
       const drawn = points.slice();
       drawn[0] = pullBack(drawn[0], drawn[1], e.pull.start);
@@ -1160,10 +1393,14 @@ function applyOverrides(scene, overrides, mut) {
       const local = (p) => { const q = new DOMPoint(p.x, p.y).matrixTransform(inv); return { x: q.x, y: q.y }; };
       const pts = drawn.map(local);
       // Orthogonal routes: square corners, rounded corners (the default), or smoothed into a curve.
-      const d = style !== 'orthogonal' || look === 'curved' ? curve(pts)
+      const d = style !== 'orthogonal' || look === 'curved' || (native && !look) ? curve(pts)
         : roundedPath(pts, look === 'orthogonal' ? 0 : radius);
       mut.set(e.pathEl, 'd', d);
-      mut.set(e.pathEl, 'data-points', btoa(JSON.stringify(points.map(local))));
+      if (e.markers?.length) {
+        const geo = pathGeometry(d);
+        for (const mk of e.markers) placeMarker(mk, geo, mut);
+      }
+      if (e.pathEl.hasAttribute('data-points')) mut.set(e.pathEl, 'data-points', btoa(JSON.stringify(points.map(local))));
       if (e.emptyLabelEl) mut.set(e.emptyLabelEl, 'visibility', 'hidden');
     }
   }
@@ -1220,7 +1457,13 @@ function applyOverrides(scene, overrides, mut) {
     const u = union(boxes);
     const pad = scene.padding;
     mut.set(scene.svg, 'viewBox', `${r1(u.x - pad)} ${r1(u.y - pad)} ${r1(u.w + 2 * pad)} ${r1(u.h + 2 * pad)}`);
-    mut.set(scene.svg, 'style', `max-width: ${r1(u.w + 2 * pad)}px;`);
+    if (scene.engine === 'pele') {
+      // Pele's root style holds its colour variables; size via width/height instead.
+      mut.set(scene.svg, 'width', r1(u.w + 2 * pad));
+      mut.set(scene.svg, 'height', r1(u.h + 2 * pad));
+    } else {
+      mut.set(scene.svg, 'style', `max-width: ${r1(u.w + 2 * pad)}px;`);
+    }
   }
   geom.warnings = warnings;
   return geom;
@@ -1279,17 +1522,19 @@ let counter = 0;
  *   const wermaid = createWermaid(mermaid);
  *   const diagram = await wermaid.render(container, source);
  *   diagram.setOverrides(overrides);   // re-apply without re-running Mermaid
+ *
+ * Experimental: `createWermaid({ engine: 'pele', pele })` renders with Pele (pele.run)
+ * instead, where `pele` is the module (`import * as pele from 'pele'`) and `options`
+ * (optional) are passed to `pele.render`. Pele re-lays a diagram out to fit a width unless
+ * told not to, so `autoDirection` is off and no `maxWidth` is set: overrides need a layout
+ * that holds still.
  */
-export function createWermaid(mermaid) {
-  /**
-   * Render `source` into `container`.
-   * Options: `id` (SVG id), `theme` (palette name; defaults to the block's `@theme`,
-   * else Mermaid's own config), `dark` (use the palette's dark variant).
-   */
-  async function render(container, source, { id, theme, dark = false } = {}) {
-    const parsed = parseSource(source);
-    const svgId = id || `wm-${++counter}`;
-    const themeName = theme ?? parsed.overrides.settings.theme ?? null;
+export function createWermaid(engine) {
+  const pele = engine?.engine === 'pele' ? engine : null;
+  const mermaid = pele ? null : engine;
+
+  /** Draw with Mermaid; returns the SVG plus the structure the scene adapter reads. */
+  async function drawMermaid(container, svgId, parsed, themeName, dark) {
     const body = themeName ? withTheme(parsed.body, themeName, { dark, el: container }) : parsed.body;
     const { svg: svgText, bindFunctions } = await mermaid.render(svgId, body);
     container.innerHTML = svgText;
@@ -1310,16 +1555,47 @@ export function createWermaid(mermaid) {
 
     const supported = !!(data && data.nodes?.length && svg.querySelector('g.node'));
     const scene = supported ? readScene(svg, svgId, data, direction) : null;
-    if (scene) {
-      scene.curve = curve;
-      scene.padding = 8;
-    }
+    if (scene) scene.curve = curve;
+    return { svg, type, supported, scene };
+  }
+
+  /** Draw with Pele. Palettes other than `pele` (Pele's own look) aren't mapped yet. */
+  function drawPele(container, svgId, parsed) {
+    const { svg: svgText, type } = pele.pele.render(parsed.body, { autoDirection: false, idPrefix: svgId, ...pele.options });
+    container.innerHTML = svgText;
+    const svg = container.querySelector('svg');
+    let data = null, direction = null;
+    try {
+      const model = pele.pele.parse(parsed.body);
+      data = peleData(model);
+      direction = model.direction ?? null;
+    } catch { /* stock only */ }
+    const supported = !!(data && data.nodes?.length && svg.querySelector('g.pele-node'));
+    const scene = supported ? readScenePele(svg, data, direction) : null;
+    if (scene) scene.curve = 'pele';
+    return { svg, type, supported, scene };
+  }
+
+  /**
+   * Render `source` into `container`.
+   * Options: `id` (SVG id), `theme` (palette name; defaults to the block's `@theme`,
+   * else Mermaid's own config), `dark` (use the palette's dark variant).
+   */
+  async function render(container, source, { id, theme, dark = false } = {}) {
+    const parsed = parseSource(source);
+    const svgId = id || `wm-${++counter}`;
+    const themeName = theme ?? parsed.overrides.settings.theme ?? null;
+    const { svg, type, supported, scene } = pele
+      ? drawPele(container, svgId, parsed)
+      : await drawMermaid(container, svgId, parsed, themeName, dark);
+    if (scene) scene.padding = 8;
     const mut = new Mutations();
     let overrides = parsed.overrides;
     let geom = null;
 
     const diagram = {
       svg, svgId, type, supported, scene,
+      engine: pele ? 'pele' : 'mermaid',
       theme: themeName,
       background: themeName ? THEMES[themeName]?.background(dark, container) ?? null : null,
       parseErrors: parsed.errors,

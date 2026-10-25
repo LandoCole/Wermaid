@@ -1,0 +1,202 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div id="a"></div><div id="b"></div>
+<script type="module">
+import * as pele from '/node_modules/pele/dist/pele.js';
+import { createWermaid, parseSource } from '/src/wermaid.js';
+const wermaid = createWermaid({ engine: 'pele', pele });
+const R = []; const ok = (name, cond, extra) => R.push({ name, pass: !!cond, extra });
+const A = document.getElementById('a'), B = document.getElementById('b');
+
+const BASE = `flowchart LR
+  A[Start] --> B{Check}
+  B -->|yes| C(Do it)
+  B e9@-->|no| D[(DB)]
+  subgraph G1 [Group one]
+    C --> E[End]
+  end
+  subgraph G2 [Isolated]
+    X --> Y
+  end
+  D --> E`;
+const withBlock = (lines) => `${BASE}\n%% @layout\n${lines.map((l) => `%% ${l}`).join('\n')}\n%% @end`;
+
+const snap = (svg) => ({
+  nodes: Object.fromEntries([...svg.querySelectorAll('g.pele-node')].map((g) => [g.dataset.id, g.getAttribute('transform')])),
+  paths: Object.fromEntries([...svg.querySelectorAll('g.pele-edge')].map((g) => [g.dataset.id, g.querySelector('path:not(.pele-marker)').getAttribute('d')])),
+});
+// Marker vertices in root coordinates (the marker's own transform applied).
+const markerPts = (svg, edgeId) => [...svg.querySelectorAll(`g.pele-edge[data-id="${edgeId}"] .pele-marker`)].map((el) => {
+  const m = el.transform.baseVal.consolidate()?.matrix ?? new DOMMatrix();
+  const nums = (el.getAttribute('d') || '').match(/-?\d*\.?\d+/g).map(Number);
+  const pts = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) pts.push(new DOMPoint(nums[i], nums[i + 1]).matrixTransform(m));
+  return pts;
+});
+const onDiamond = (p, box, tol = 0.6) => Math.abs(Math.abs(p.x - box.cx) / (box.w / 2) + Math.abs(p.y - box.cy) / (box.h / 2) - 1) * Math.min(box.w, box.h) / 2 < tol;
+// Every cubic in a path is a Pele S-bend: its handles lie along one axis through its ends.
+const peleBends = (d) => {
+  const toks = d.match(/[MLCQ]|-?\d*\.?\d+/g); let cur = null, ok = true, n = 0;
+  for (let i = 0; i < toks.length;) {
+    const c = toks[i++];
+    if (c === 'M' || c === 'L') { cur = [+toks[i++], +toks[i++]]; continue; }
+    if (c === 'Q') { i += 2; cur = [+toks[i++], +toks[i++]]; continue; }
+    const [x1, y1, x2, y2, x, y] = toks.slice(i, i + 6).map(Number); i += 6; n++;
+    const h = Math.abs(y1 - cur[1]) < 0.11 && Math.abs(y2 - y) < 0.11 && Math.abs(x1 - x2) < 0.11;
+    const v = Math.abs(x1 - cur[0]) < 0.11 && Math.abs(x2 - x) < 0.11 && Math.abs(y1 - y2) < 0.11;
+    if (!h && !v) ok = false;
+    cur = [x, y];
+  }
+  return ok;
+};
+
+// 1. No block → byte-identical to stock Pele.
+{
+  A.innerHTML = pele.render(BASE, { autoDirection: false, idPrefix: 'same' }).svg;
+  const stock = A.innerHTML;
+  const d = await wermaid.render(B, BASE, { id: 'same' });
+  ok('no block: SVG identical to stock Pele', B.innerHTML === stock);
+  ok('no block: supported + scene read', d.supported && d.engine === 'pele' && d.scene.nodes.size === 7 && d.scene.clusters.size === 2 && d.scene.edges.size === 6,
+     { nodes: d.scene?.nodes.size, clusters: d.scene?.clusters.size, edges: d.scene?.edges.size });
+  const ab = d.scene.edges.get('L_A_B_0'), b = d.scene.nodes.get('B').box;
+  ok('scene: edge points run boundary to boundary', onDiamond(ab.points.at(-1), b) && Math.abs(ab.pull.end - 7) < 0.01, { last: ab.points.at(-1), pull: ab.pull });
+  ok('scene: parents from subgraphs', d.scene.nodes.get('C').parent === 'G1' && d.scene.nodes.get('X').parent === 'G2' && !d.scene.nodes.get('A').parent);
+  ok('scene: shapes from Pele classes', d.scene.nodes.get('B').shape === 'diam' && d.scene.nodes.get('D').shape === 'cyl');
+}
+
+// 2. Pin one node → only it and its edges change; arrowheads follow.
+{
+  const base = await wermaid.render(A, BASE, { id: 'p' });
+  const s0 = snap(base.svg);
+  const style0 = base.svg.getAttribute('style');
+  const bBox = base.scene.nodes.get('B').box;
+  const d = await wermaid.render(B, withBlock([`B at ${bBox.cx},${bBox.cy + 140}`]), { id: 'p' });
+  const s1 = snap(d.svg);
+  const changedNodes = Object.keys(s1.nodes).filter((k) => s1.nodes[k] !== s0.nodes[k]);
+  const changedPaths = Object.keys(s1.paths).filter((k) => s1.paths[k] !== s0.paths[k]).sort();
+  ok('pin: only B moved', changedNodes.length === 1 && changedNodes[0] === 'B', changedNodes);
+  ok('pin: only B\'s edges re-routed', JSON.stringify(changedPaths) === JSON.stringify(['L_A_B_0', 'L_B_C_0', 'e9']), changedPaths);
+  const g = d.geometry.nodes.get('B');
+  ok('pin: B center at requested point', Math.abs(g.box.cy - (bBox.cy + 140)) < 0.01);
+  const e = d.geometry.edges.get('L_A_B_0');
+  ok('pin: A→B route ends on B boundary', onDiamond(e.points.at(-1), g.box), { last: e.points.at(-1), box: g.box });
+  const tip = markerPts(d.svg, 'L_A_B_0')[0];
+  const tipPt = tip.reduce((best, p) => (Math.hypot(p.x - g.box.cx, p.y - g.box.cy) < Math.hypot(best.x - g.box.cx, best.y - g.box.cy) ? p : best));
+  ok('pin: A→B arrowhead tip touches B', onDiamond(tipPt, g.box), { tipPt, box: g.box });
+  const untouchedMarker = d.svg.querySelector('g.pele-edge[data-id="L_X_Y_0"] .pele-marker');
+  ok('pin: other arrowheads untouched', !untouchedMarker.hasAttribute('transform'));
+  ok('pin: re-routed edges use Pele S-bends, not curveBasis', changedPaths.every((id) => peleBends(s1.paths[id])), changedPaths.map((id) => s1.paths[id]));
+  ok('pin: viewBox grew to fit, size follows', d.svg.getAttribute('viewBox') !== base.svg.getAttribute('viewBox') && +d.svg.getAttribute('height') > +base.svg.getAttribute('height'));
+  ok('pin: Pele colour variables kept', d.svg.getAttribute('style') === style0);
+  d.showStock();
+  ok('showStock: back to byte-identical', d.svg.outerHTML === base.svg.outerHTML);
+}
+
+// 3. Move a node inside a subgraph → subgraph refits, title stays top-left.
+{
+  const d0 = await wermaid.render(A, BASE, { id: 'g' });
+  const lab0 = d0.scene.clusters.get('G1').labelEl.getBBox();
+  const d = await wermaid.render(B, withBlock(['C nudge 0,-160']), { id: 'g' });
+  const G1 = d.geometry.clusters.get('G1').box, C = d.geometry.nodes.get('C').box;
+  ok('group: G1 contains moved C', G1.y <= C.y && G1.y + G1.h >= C.y + C.h, { G1, C });
+  ok('group: G2 untouched', !d.geometry.clusters.get('G2').changed);
+  const r = d.svg.querySelector('g.pele-cluster[data-id="G1"] > rect').getBBox();
+  ok('group: rect drawn at new size', Math.abs(r.height - G1.h) < 0.5, { r: r.height, G1: G1.h });
+  const lab = d.svg.querySelector('g.pele-cluster[data-id="G1"] .pele-cluster-label');
+  const lb = lab.getBBox(), m = lab.transform.baseVal.consolidate().matrix;
+  ok('group: title keeps its top-left offset', Math.abs(lb.x + m.e - r.x - (lab0.x - d0.scene.clusters.get('G1').box.x)) < 0.5 && Math.abs(lb.y + m.f - r.y - (lab0.y - d0.scene.clusters.get('G1').box.y)) < 0.5);
+}
+
+// 4. Stale ids → warnings, not crashes.
+{
+  const d = await wermaid.render(B, withBlock(['Nope at 1,2', 'Q->R via 3,4', 'A frob 2']), { id: 's' });
+  ok('stale: two warnings', d.warnings.length === 2, d.warnings);
+  ok('stale: parse error reported with line', d.parseErrors.length === 1 && d.parseErrors[0].line > 0, d.parseErrors);
+}
+
+// 5. Subgraph nudge carries children (and their arrowheads); resize; via + label.
+{
+  const d0 = await wermaid.render(A, BASE, { id: 'c' });
+  const d = await wermaid.render(B, withBlock(['G2 nudge 400,0', 'A size 160x80', 'edge e9 via 300,500 ; label 0,20']), { id: 'c' });
+  const X0 = d0.scene.nodes.get('X').box, X1 = d.geometry.nodes.get('X').box;
+  ok('group nudge: X moved with G2', Math.abs(X1.cx - X0.cx - 400) < 0.01);
+  ok('group nudge: X→Y shifted, not re-routed', d.geometry.edges.get('L_X_Y_0').mode === 'shift');
+  const mk = d.svg.querySelector('g.pele-edge[data-id="L_X_Y_0"] .pele-marker');
+  ok('group nudge: X→Y arrowhead shifted with it', /^translate\(400, 0\)/.test(mk.getAttribute('transform') || ''), mk.getAttribute('transform'));
+  const Abox = d.geometry.nodes.get('A').box;
+  const rb = d.svg.querySelector('g.pele-node[data-id="A"] > rect').getBoundingClientRect();
+  ok('resize: A drawn 160x80', Abox.w === 160 && Abox.h === 80 && Math.abs(rb.width / rb.height - 2) < 0.05, { w: rb.width, h: rb.height });
+  const e9 = d.geometry.edges.get('e9');
+  const onRoute = (pts, q) => pts.some((p, i) => i && Math.min(p.x, pts[i - 1].x) - 0.01 <= q.x && q.x <= Math.max(p.x, pts[i - 1].x) + 0.01 && Math.min(p.y, pts[i - 1].y) - 0.01 <= q.y && q.y <= Math.max(p.y, pts[i - 1].y) + 0.01);
+  ok('via: route passes through waypoint', onRoute(e9.points, { x: 300, y: 500 }), e9.points);
+  ok('via: drawn with Pele S-bends', peleBends(d.scene.edges.get('e9').pathEl.getAttribute('d')), d.scene.edges.get('e9').pathEl.getAttribute('d'));
+  const lab = d.svg.querySelector('g.pele-edge-label[data-id="e9"]');
+  ok('label: offset applied', e9.labelBox && Math.abs(e9.labelBox.cy - e9.labelAuto.y - 20) < 0.01 && /translate/.test(lab.getAttribute('transform') || ''));
+  const D = d.geometry.nodes.get('D').box;
+  const tips = markerPts(d.svg, 'e9')[0];
+  const near = tips.reduce((best, p) => Math.min(best, Math.abs(Math.max(Math.abs(p.x - D.cx) - D.w / 2, Math.abs(p.y - D.cy) - D.h / 2))), Infinity);
+  ok('via: e9 arrowhead tip on D', near < 0.6, near);
+}
+
+// 6. Edge looks still apply; orthogonal routes avoid shapes.
+{
+  const o = await wermaid.render(B, withBlock(['@edges orthogonal']), { id: 'k' });
+  const axis = (pts) => pts.every((p, i, a) => !i || Math.abs(p.x - a[i - 1].x) < 0.01 || Math.abs(p.y - a[i - 1].y) < 0.01);
+  ok('@edges orthogonal: every edge routed square', [...o.geometry.edges.values()].every((g) => g.mode === 'route' && axis(g.points)));
+  ok('@edges orthogonal: no curves in paths', [...o.scene.edges.values()].every((e) => !/[CQ]/.test(e.pathEl.getAttribute('d'))));
+}
+
+// 7. Start markers and other marker shapes ride along.
+{
+  const SRC = `flowchart TB
+  P((circ)) <--> Q>flag]
+  R{{hex}} --o P
+  R -.-x S([stadium])`;
+  const d0 = await wermaid.render(A, SRC, { id: 'm' });
+  const pq = d0.scene.edges.get('L_P_Q_0');
+  ok('markers: both ends of <--> recorded', pq.markers.length === 2 && pq.pull.start > 6 && pq.pull.end > 6, pq.pull);
+  const d = await wermaid.render(B, `${SRC}\n%% @layout\n%% Q nudge 160,60\n%% @end`, { id: 'm' });
+  const Q = d.geometry.nodes.get('Q').box;
+  const pts = markerPts(d.svg, 'L_P_Q_0');
+  const touchesQ = pts.some((ps) => ps.some((p) => Math.abs(Math.max(Math.abs(p.x - Q.cx) - Q.w / 2, Math.abs(p.y - Q.cy) - Q.h / 2)) < 0.6));
+  ok('markers: <--> end arrowhead lands on moved Q', touchesQ, pts);
+  ok('markers: start arrowhead moved too', pts.every((_, i) => d.svg.querySelectorAll('g.pele-edge[data-id="L_P_Q_0"] .pele-marker')[i].hasAttribute('transform')));
+}
+
+// 8. State and class diagrams use the same markup.
+{
+  const st = await wermaid.render(B, `stateDiagram-v2
+  [*] --> Idle
+  Idle --> Running : start
+  Running --> Idle : stop
+  state Running {
+    [*] --> Warm
+    Warm --> Hot
+  }
+  Running --> [*]
+%% @layout
+%% Idle nudge -120,0
+%% @end`, { id: 'st' });
+  ok('state: supported', st.supported && st.scene.nodes.size >= 4 && st.scene.clusters.has('Running'), { nodes: st.scene && [...st.scene.nodes.keys()], edges: st.scene && [...st.scene.edges.keys()] });
+  ok('state: nudge applied', st.supported && Math.abs(st.geometry.nodes.get('Idle').delta.x + 120) < 0.01 && st.warnings.length === 0, st.warnings);
+  const cl = await wermaid.render(B, `classDiagram
+  class Order { +id: UUID\n +total() Money }
+  class Customer
+  Customer "1" --> "*" Order : places
+  Order *-- LineItem
+%% @layout
+%% Customer nudge 200,0
+%% @end`, { id: 'cl' });
+  ok('class: supported', cl.supported && cl.scene.nodes.size === 3 && cl.scene.edges.size === 2, { nodes: cl.scene && [...cl.scene.nodes.keys()], edges: cl.scene && [...cl.scene.edges.keys()] });
+  ok('class: Customer→Order re-routed', cl.supported && cl.geometry.edges.get('id_Customer_Order_1')?.mode === 'route' && cl.warnings.length === 0, cl.warnings);
+  const sq = await wermaid.render(B, `sequenceDiagram\n  A->>B: hi`, { id: 'sq' });
+  ok('sequence: renders stock, marked unsupported', !sq.supported && sq.svg);
+}
+
+// 9. Round trip: overrides written back are engine-independent.
+{
+  const d = await wermaid.render(B, withBlock(['B nudge 0,40', 'edge e9 via 1,2']), { id: 'w' });
+  const out = d.writeSource(BASE);
+  ok('roundtrip: block written', /%% B\s+nudge 0,40[\s\S]*%% edge e9\s+via 1,2/.test(out) && parseSource(out).body === BASE, out);
+}
+window.RESULTS = R;
+</script></body></html>
