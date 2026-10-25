@@ -310,18 +310,28 @@ const EXAMPLES = /*__WERMAID_EXAMPLES__*/;
 
 const $ = (id) => document.getElementById(id);
 const srcEl = $('src'), sheet = $('sheet'), wrap = $('sheet-wrap'), strip = $('strip');
-const SVGNS = 'http://www.w3.org/2000/svg';
 const DRAFT_KEY = 'wermaid:draft:v1';
 
 const wermaid = createWermaid(mermaid);
 let diagram = null;          // current render
 let renderedBody = null;     // Mermaid body the current render came from
-let overrides = emptyOverrides();
-let selection = null;        // { kind: 'node' | 'cluster' | 'edge', id }
 let showStock = false;
 let zoom = 1;
 let renderSeq = 0;
-const undoStack = [], redoStack = [];
+const undoHistory = createHistory(200);
+
+/* Editing (dragging, resizing, bends, keys) lives in edit.js; the page shows the result. */
+const ed = createEditor(sheet, {
+  snap: () => $('snap').checked,
+  scale: () => zoom,
+  onPreview: () => { showState(); writeBack(); },
+  onCommit: () => { showState(); writeBack({ commit: true }); },
+  onSelect: () => renderStrip(),
+});
+/** Redraw the selection handles at the current zoom (select() redraws the overlay). */
+const redrawOverlay = () => ed.select(ed.selection);
+/** A shape is being dragged: the view holds still until it ends. */
+const shapeDragging = () => sheet.classList.contains('dragging');
 
 /* ---------- theme ---------- */
 const darkQuery = matchMedia('(prefers-color-scheme: dark)');
@@ -371,6 +381,7 @@ function ensureFonts(name) {
 }
 paletteSel.addEventListener('change', () => {
   if (!diagram) return;
+  const { overrides } = ed;
   overrides.settings = overrides.settings || {};
   if (paletteSel.value === DEFAULT_THEME) delete overrides.settings.theme;
   else overrides.settings.theme = paletteSel.value;
@@ -395,9 +406,9 @@ let lastCommitted = '';
 
 async function loadSource(text, { resetHistory } = {}) {
   srcEl.value = text;
-  if (resetHistory) { undoStack.length = 0; redoStack.length = 0; updateUndoButtons(); }
+  if (resetHistory) { undoHistory.clear(); updateUndoButtons(); }
   lastCommitted = text;
-  selection = null;
+  ed.select(null);
   renderedBody = null;
   await refresh(text);
   fitToSheet({ max: 1 });
@@ -409,8 +420,8 @@ async function refresh(text) {
   const palette = parsed.overrides.settings.theme || DEFAULT_THEME;
   const renderKey = `${parsed.body}\u0000${palette}\u0000${isDark()}`;
   if (diagram && renderKey === renderedBody) {
-    overrides = parsed.overrides;
-    apply();
+    ed.attach(diagram, parsed.overrides);
+    showState();
     showMessages(parsed.errors);
     return;
   }
@@ -445,11 +456,9 @@ async function refresh(text) {
   showCredit(palette);
   // The drawing sits on its palette's own ground (the page's paper for Wermaid).
   wrap.style.setProperty('--sheet-bg', palette === DEFAULT_THEME ? 'transparent' : diagram.background || 'transparent');
-  overrides = diagram.overrides;
   sheet.classList.toggle('editable', diagram.supported);
-  addHitPaths();
-  if (selection && !targetExists(selection)) selection = null;
-  apply();
+  ed.attach(diagram, diagram.overrides);
+  showState();
   const notice = $('notice');
   notice.hidden = diagram.supported;
   notice.textContent = diagram.supported ? '' :
@@ -457,38 +466,25 @@ async function refresh(text) {
   showMessages(parsed.errors);
 }
 
-function targetExists(sel) {
-  const s = diagram?.scene;
-  if (!s) return false;
-  return sel.kind === 'node' ? s.nodes.has(sel.id) : sel.kind === 'cluster' ? s.clusters.has(sel.id) : s.edges.has(sel.id);
-}
-
-/** Re-key edge entries by resolved edge id so editor lookups are stable. */
-function normalizeOverrides() {
-  const next = new Map();
-  for (const [key, e] of overrides.targets) {
-    if (e.kind === 'edge' && e.resolved) next.set(`edge:${e.resolved}`, e);
-    else next.set(key, e);
-  }
-  overrides.targets = next;
-}
-
-let dragViewBox = null;
-function apply() {
-  if (!diagram) return;
-  if (showStock) diagram.showStock();
-  else { diagram.setOverrides(overrides); normalizeOverrides(); }
-  if (dragViewBox) {
-    // Hold the frame still while dragging; it refits when the drag ends.
-    diagram.svg.setAttribute('viewBox', dragViewBox);
-  }
-  $('edge-style').value = overrides.settings?.edges?.style || '';
+/** The page's side of showing the overrides: edge picker, drawing size, strip, caption, warnings. */
+function showState() {
+  $('edge-style').value = ed.overrides.settings?.edges?.style || '';
   sizeSvg();
-  syncHitPaths();
-  drawOverlay();
   renderStrip();
   updateBlockCount();
   showWarnings();
+}
+
+function apply() {
+  if (!diagram) return;
+  ed.apply();
+  showState();
+}
+
+/** Apply a change the page made to the overrides and record it. */
+function commit() {
+  apply();
+  writeBack({ commit: true });
 }
 
 function writeBack({ commit } = {}) {
@@ -507,29 +503,24 @@ function writeBack({ commit } = {}) {
 
 /* ---------- undo ---------- */
 function pushUndo(text) {
-  if (undoStack.at(-1) === text) return;
-  undoStack.push(text);
-  if (undoStack.length > 200) undoStack.shift();
-  redoStack.length = 0;
+  undoHistory.push(text);
   updateUndoButtons();
 }
 function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(srcEl.value);
-  const prev = undoStack.pop();
+  const prev = undoHistory.undo(srcEl.value);
+  if (prev == null) return;
   srcEl.value = prev; lastCommitted = prev;
   refresh(prev); updateUndoButtons();
 }
 function redo() {
-  if (!redoStack.length) return;
-  undoStack.push(srcEl.value);
-  const next = redoStack.pop();
+  const next = undoHistory.redo(srcEl.value);
+  if (next == null) return;
   srcEl.value = next; lastCommitted = next;
   refresh(next); updateUndoButtons();
 }
 function updateUndoButtons() {
-  $('undo').disabled = !undoStack.length;
-  $('redo').disabled = !redoStack.length;
+  $('undo').disabled = !undoHistory.canUndo;
+  $('redo').disabled = !undoHistory.canRedo;
 }
 $('undo').addEventListener('click', undo);
 $('redo').addEventListener('click', redo);
@@ -558,6 +549,7 @@ function showWarnings() {
   for (const w of diagram?.warnings || []) add('warn', `<span>${esc(w)}</span>`);
 }
 function updateBlockCount() {
+  const { overrides } = ed;
   const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label || e.style).length
     + (overrides.settings?.edges ? 1 : 0) + (overrides.settings?.theme ? 1 : 0);
   updateCaption(n);
@@ -577,7 +569,7 @@ function applyView() {
   // shape is being dragged: the diagram grows under the pointer, and moving the view then would
   // feed back into the drag. The drag's last apply() clamps.
   const svg = diagram?.svg;
-  if (svg && !drag) {
+  if (svg && !shapeDragging()) {
     const vb = svg.viewBox.baseVal, narrow = wrap.clientWidth < 600;
     const side = narrow ? 16 : 32;
     Object.assign(view, clampView(view, { width: vb.width * zoom, height: vb.height * zoom },
@@ -610,7 +602,7 @@ function setZoom(z, ax = wrap.clientWidth / 2, ay = wrap.clientHeight / 2) {
   view.y = ay - (ay - view.y) * (next / zoom);
   zoom = next;
   sizeSvg();
-  drawOverlay();
+  redrawOverlay();
 }
 $('zoom-in').addEventListener('click', () => setZoom(zoom * 1.25));
 $('zoom-out').addEventListener('click', () => setZoom(zoom / 1.25));
@@ -625,10 +617,10 @@ function fitToSheet({ max = 1.5 } = {}) {
   view.y = top + (wrap.clientHeight - top - side - vb.height * zoom) / 2;
   lastVB = { x: vb.x, y: vb.y };
   sizeSvg();
-  drawOverlay();
+  redrawOverlay();
 }
 $('zoom-fit').addEventListener('click', () => fitToSheet());
-new ResizeObserver(() => { if (diagram) { applyView(); drawOverlay(); } }).observe(wrap);
+new ResizeObserver(() => { if (diagram) { applyView(); redrawOverlay(); } }).observe(wrap);
 
 /* Wheel: two-finger scroll or the mouse wheel pans; pinch or Ctrl/⌘ + wheel zooms at the cursor. */
 wrap.addEventListener('wheel', (ev) => {
@@ -645,126 +637,6 @@ wrap.addEventListener('wheel', (ev) => {
   }
 }, { passive: false });
 
-/* ---------- edge hit areas ---------- */
-function addHitPaths() {
-  if (!diagram?.scene) return;
-  for (const e of diagram.scene.edges.values()) {
-    const hit = document.createElementNS(SVGNS, 'path');
-    hit.setAttribute('class', 'wm-hit');
-    hit.dataset.wmEdge = e.id;
-    e.pathEl.after(hit);
-    e.hitEl = hit;
-  }
-}
-function syncHitPaths() {
-  if (!diagram?.scene) return;
-  for (const e of diagram.scene.edges.values()) {
-    if (!e.hitEl) continue;
-    e.hitEl.setAttribute('d', e.pathEl.getAttribute('d'));
-    const t = e.pathEl.getAttribute('transform');
-    t ? e.hitEl.setAttribute('transform', t) : e.hitEl.removeAttribute('transform');
-    e.hitEl.style.display = showStock ? 'none' : '';
-  }
-}
-
-/* ---------- overrides helpers ---------- */
-function entryFor(kind, id, create = true) {
-  const key = kind === 'edge' ? `edge:${id}` : id;
-  let e = overrides.targets.get(key);
-  if (!e && create) {
-    e = { kind: kind === 'edge' ? 'edge' : 'node', selector: id };
-    if (kind === 'edge') e.resolved = id;
-    overrides.targets.set(key, e);
-  }
-  return e;
-}
-function clearEntry(kind, id) {
-  overrides.targets.delete(kind === 'edge' ? `edge:${id}` : id);
-}
-const snapOn = () => $('snap').checked;
-const snap = (v) => (snapOn() ? Math.round(v / 8) * 8 : Math.round(v * 10) / 10);
-
-/* ---------- overlay ---------- */
-function overlayGroup() {
-  let g = diagram.svg.querySelector(':scope > g.wm-overlay');
-  if (!g) {
-    g = document.createElementNS(SVGNS, 'g');
-    g.setAttribute('class', 'wm-overlay');
-    diagram.svg.append(g);
-  }
-  return g;
-}
-function el(tag, attrs, parent) {
-  const n = document.createElementNS(SVGNS, tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  parent?.append(n);
-  return n;
-}
-function pxScale() {
-  const m = diagram.svg.getScreenCTM();
-  return m ? m.a : 1;
-}
-function drawOverlay() {
-  if (!diagram?.svg) return;
-  const g = overlayGroup();
-  g.replaceChildren();
-  if (showStock || !diagram.supported || !diagram.geometry) return;
-  const k = 1 / pxScale();
-  const geom = diagram.geometry;
-
-  // Small markers on shapes that carry an override.
-  for (const [id, n] of geom.nodes) {
-    const ov = overrides.targets.get(id);
-    if (ov && (ov.at || ov.nudge || ov.size)) el('circle', { class: ov.at ? 'pin' : 'pin hollow', cx: n.box.x + n.box.w, cy: n.box.y, r: 3 * k }, g);
-  }
-  if (!selection) return;
-  if (selection.kind === 'node' || selection.kind === 'cluster') {
-    const b = (selection.kind === 'node' ? geom.nodes : geom.clusters).get(selection.id)?.box;
-    if (!b) return;
-    const p = 4 * k;
-    el('rect', { class: 'sel', x: b.x - p, y: b.y - p, width: b.w + 2 * p, height: b.h + 2 * p }, g);
-    if (selection.kind === 'node') {
-      const s = 8 * k;
-      const corners = { nw: [b.x, b.y], ne: [b.x + b.w, b.y], sw: [b.x, b.y + b.h], se: [b.x + b.w, b.y + b.h] };
-      for (const [name, [x, y]] of Object.entries(corners)) {
-        el('rect', { class: `h corner ${name}`, x: x - s / 2, y: y - s / 2, width: s, height: s, 'data-handle': `corner:${name}` }, g);
-      }
-    }
-  } else if (selection.kind === 'edge') {
-    const e = diagram.scene.edges.get(selection.id);
-    const ge = geom.edges.get(selection.id);
-    if (!e || !ge) return;
-    const outline = el('path', { class: 'edge-sel', d: e.pathEl.getAttribute('d') }, g);
-    const m = ctmToDiagram(e.pathEl);
-    outline.setAttribute('transform', `matrix(${m.a},${m.b},${m.c},${m.d},${m.e},${m.f})`);
-    const route = routePoints(selection.id);
-    const r = 5 * k;
-    for (let i = 0; i < route.length - 1; i++) {
-      const a = route[i], b = route[i + 1];
-      el('circle', { class: 'h add', cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: r * 0.85, 'data-handle': `add:${i}` }, g);
-    }
-    (entryFor('edge', selection.id, false)?.via || []).forEach((v, i) => {
-      el('circle', { class: 'h via', cx: v.x, cy: v.y, r, 'data-handle': `via:${i}` }, g);
-    });
-  }
-}
-
-/** Matrix from an element's user space to the diagram's, as it is drawn right now. */
-function ctmToDiagram(node) {
-  return diagram.svg.getScreenCTM().inverse().multiply(node.getScreenCTM());
-}
-
-/** Points a user edits for an edge: its two ends plus any waypoints. */
-function routePoints(id) {
-  const ge = diagram.geometry.edges.get(id);
-  const via = entryFor('edge', id, false)?.via || [];
-  if (via.length) return [ge.points[0], ...via, ge.points.at(-1)];
-  // Auto route: put the "+" on the drawn line's real midpoint.
-  const e = diagram.scene.edges.get(id);
-  const mid = e.pathEl.getPointAtLength(e.pathEl.getTotalLength() / 2).matrixTransform(ctmToDiagram(e.pathEl));
-  return [ge.points[0], { x: mid.x, y: mid.y }, ge.points.at(-1)];
-}
-
 /* ---------- instrument strip ---------- */
 function renderStrip() {
   strip.replaceChildren();
@@ -778,6 +650,7 @@ function renderStrip() {
     strip.append(span('hint', 'Editing is off for this diagram type.'));
     return;
   }
+  const { selection } = ed;
   if (!selection) {
     const hint = span('hint', '');
     hint.innerHTML = 'Drag a shape to nudge it from its auto-layout spot; <kbd>Alt</kbd>-drag pins it in place. Drag a corner to resize, a line to bend it (double-click a bend to remove it), a subgraph’s frame to move everything inside, the background to pan; pinch or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>-scroll to zoom. <kbd>←↑→↓</kbd> nudge · <kbd>Del</kbd> resets.';
@@ -786,7 +659,7 @@ function renderStrip() {
   }
   const geom = diagram.geometry;
   strip.append(span('kind', selection.kind === 'cluster' ? 'subgraph' : selection.kind));
-  const ov = entryFor(selection.kind, selection.id, false);
+  const ov = ed.overrides.targets.get(selection.kind === 'edge' ? `edge:${selection.id}` : selection.id);
   const field = (label, value, onSet) => {
     const wrapEl = document.createElement('label');
     wrapEl.className = 'field';
@@ -803,33 +676,38 @@ function renderStrip() {
     const id = selection.id;
     strip.append(span('sel-name', id));
     const n = geom.nodes.get(id);
-    const pinned = isPinned(id);
+    const pinned = !!ov?.at;
     const nudge = ov?.nudge || { x: 0, y: 0 };
     strip.append(span('state', pinned ? 'pinned' : (nudge.x || nudge.y) ? 'nudged' : 'auto layout'));
+    // Typed positions move the shape by the difference, so a pin stays a pin and a nudge a nudge.
     if (pinned) {
-      field('x', n.box.cx, (v) => { placeNode(id, { x: v, y: n.box.cy }, { snapped: false }); commit(); });
-      field('y', n.box.cy, (v) => { placeNode(id, { x: n.box.cx, y: v }, { snapped: false }); commit(); });
+      field('x', n.box.cx, (v) => ed.nudge(v - n.box.cx, 0));
+      field('y', n.box.cy, (v) => ed.nudge(0, v - n.box.cy));
     } else {
-      const setNudge = (x, y) => { const e = entryFor('node', id); e.nudge = { x, y }; delete e.at; commit(); };
-      field('dx', nudge.x, (v) => setNudge(v, nudge.y));
-      field('dy', nudge.y, (v) => setNudge(nudge.x, v));
+      field('dx', nudge.x, (v) => ed.nudge(v - nudge.x, 0));
+      field('dy', nudge.y, (v) => ed.nudge(0, v - nudge.y));
     }
-    field('w', n.box.w, (v) => { entryFor('node', id).size = { w: Math.max(8, v), h: n.box.h }; commit(); });
-    field('h', n.box.h, (v) => { entryFor('node', id).size = { w: n.box.w, h: Math.max(8, v) }; commit(); });
+    const setSize = (size) => {
+      const { targets } = ed.overrides;
+      if (!targets.has(id)) targets.set(id, { kind: 'node', selector: id });
+      targets.get(id).size = size;
+      commit();
+    };
+    field('w', n.box.w, (v) => setSize({ w: Math.max(8, v), h: n.box.h }));
+    field('h', n.box.h, (v) => setSize({ w: n.box.w, h: Math.max(8, v) }));
     const toggle = document.createElement('button');
     toggle.className = 'btn'; toggle.type = 'button';
     toggle.textContent = pinned ? 'Unpin' : 'Pin here';
     toggle.title = pinned
       ? 'Keep this spot as an offset from the auto layout, so it follows layout changes'
       : 'Fix this shape at its current coordinates, whatever the auto layout does';
-    toggle.addEventListener('click', () => { placeNode(id, { x: n.box.cx, y: n.box.cy }, { pin: !pinned, snapped: false }); commit(); });
+    toggle.addEventListener('click', () => (pinned ? ed.unpin() : ed.pin()));
     strip.append(toggle);
   } else if (selection.kind === 'cluster') {
     strip.append(span('sel-name', selection.id));
     const c = geom.clusters.get(selection.id);
-    const setNudge = (x, y) => { const e = entryFor('cluster', selection.id); e.nudge = { x, y }; delete e.at; commit(); };
-    field('dx', c.offset.x, (v) => setNudge(v, c.offset.y));
-    field('dy', c.offset.y, (v) => setNudge(c.offset.x, v));
+    field('dx', c.offset.x, (v) => ed.nudge(v - c.offset.x, 0));
+    field('dy', c.offset.y, (v) => ed.nudge(0, v - c.offset.y));
   } else {
     const e = diagram.scene.edges.get(selection.id);
     strip.append(span('sel-name', `${e.start} → ${e.end}`));
@@ -845,18 +723,14 @@ function renderStrip() {
     for (const [v, t] of [['', 'Diagram default'], ['rounded', 'Rounded'], ['orthogonal', 'Orthogonal'], ['curved', 'Curved']]) sel.add(new Option(t, v));
     sel.value = ov?.style || '';
     const edgeId = selection.id;
-    sel.addEventListener('change', () => {
-      const e = entryFor('edge', edgeId);
-      if (sel.value) e.style = sel.value; else delete e.style;
-      commit();
-    });
+    sel.addEventListener('change', () => ed.setEdgeStyle(edgeId, sel.value || null));
     wrapEl.append(sel);
     strip.append(wrapEl);
   }
   if (ov && (ov.at || ov.nudge || ov.size || ov.via?.length || ov.label || ov.style)) {
     const b = document.createElement('button');
     b.className = 'btn'; b.type = 'button'; b.textContent = 'Reset this';
-    b.addEventListener('click', () => { clearEntry(selection.kind, selection.id); commit(); });
+    b.addEventListener('click', () => ed.resetSelection());
     strip.append(b);
   }
 }
@@ -887,206 +761,10 @@ function updateCaption(count) {
   $('figcap').textContent = `Fig. 1 · ${name}, ${state}`;
 }
 
-/* ---------- placing nodes: nudge by default, pin on request ---------- */
-const isPinned = (id) => !!entryFor('node', id, false)?.at;
-/** Put a node's center at an absolute point, stored as a nudge (default) or a pin. */
-function placeNode(id, center, { pin = isPinned(id), snapped = true } = {}) {
-  const e = entryFor('node', id);
-  const inh = diagram.geometry.nodes.get(id).inherited;
-  const base = diagram.scene.nodes.get(id).box;
-  const q = (v) => (snapped ? snap(v) : Math.round(v * 10) / 10);
-  if (pin) {
-    e.at = { x: q(center.x) - inh.x, y: q(center.y) - inh.y };
-    delete e.nudge;
-  } else {
-    e.nudge = { x: q(center.x - inh.x - base.cx), y: q(center.y - inh.y - base.cy) };
-    delete e.at;
-  }
-}
-
-function commit() {
-  apply();
-  writeBack({ commit: true });
-}
-
-/* ---------- pointer interaction ---------- */
-let drag = null;
-
-function hitTarget(target) {
-  const handle = target.closest('[data-handle]');
-  if (handle) return { type: 'handle', handle: handle.dataset.handle };
-  const hit = target.closest('.wm-hit');
-  if (hit) return { type: 'edge', id: hit.dataset.wmEdge };
-  const s = diagram.scene;
-  const label = target.closest('g.edgeLabel');
-  if (label) for (const e of s.edges.values()) if (e.labelEl === label) return { type: 'label', id: e.id };
-  const node = target.closest('g.node');
-  if (node) for (const n of s.nodes.values()) if (n.el === node || n.el.contains(node)) return { type: 'node', id: n.id };
-  for (const n of s.nodes.values()) if (n.el.contains(target)) return { type: 'node', id: n.id };
-  // Clusters: innermost one whose group contains the target.
-  let best = null;
-  for (const c of s.clusters.values()) if (c.el.contains(target) && (!best || best.depth < c.depth)) best = c;
-  if (best) return { type: 'cluster', id: best.id };
-  return { type: 'none' };
-}
-
+/* ---------- pointer coordinates ---------- */
 sheet.addEventListener('pointermove', (ev) => {
-  if (!diagram?.svg || drag) return;
-  showCoords(diagram.toDiagram(ev.clientX, ev.clientY));
+  if (diagram?.svg) showCoords(diagram.toDiagram(ev.clientX, ev.clientY));
 });
-
-sheet.addEventListener('pointerdown', (ev) => {
-  if (!diagram?.supported || showStock || ev.button !== 0) return;
-  // Empty sheet: leave it to the pan handler on the scroll area.
-  if (!diagram.svg.contains(ev.target)) return;
-  const t = hitTarget(ev.target);
-  const p0 = diagram.toDiagram(ev.clientX, ev.clientY);
-  const geom = diagram.geometry;
-  drag = { p0, moved: false, pointerId: ev.pointerId, before: srcEl.value };
-
-  if (t.type === 'handle') {
-    const [kind, arg] = t.handle.split(':');
-    if (kind === 'corner') {
-      const b = geom.nodes.get(selection.id).box;
-      const fixed = { nw: [b.x + b.w, b.y + b.h], ne: [b.x, b.y + b.h], sw: [b.x + b.w, b.y], se: [b.x, b.y] }[arg];
-      Object.assign(drag, { kind: 'resize', id: selection.id, fixed: { x: fixed[0], y: fixed[1] }, inherited: geom.nodes.get(selection.id).inherited });
-    } else if (kind === 'via' && isDoublePress(`${selection.id}:${arg}`)) {
-      // Double-click on a bend removes it.
-      const e = entryFor('edge', selection.id);
-      e.via = e.via.filter((_, i) => i !== +arg);
-      if (!e.via.length) delete e.via;
-      drag = null;
-      ev.preventDefault();
-      commit();
-      return;
-    } else if (kind === 'via') {
-      Object.assign(drag, { kind: 'via', id: selection.id, index: +arg, start: { ...entryFor('edge', selection.id).via[+arg] } });
-    } else if (kind === 'add') {
-      const e = entryFor('edge', selection.id);
-      const route = routePoints(selection.id);
-      const a = route[+arg], b = route[+arg + 1];
-      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      e.via = [...(e.via || [])];
-      const index = Math.min(+arg, e.via.length);
-      e.via.splice(index, 0, mid);
-      Object.assign(drag, { kind: 'via', id: selection.id, index, start: mid });
-    }
-  } else if (t.type === 'node') {
-    select({ kind: 'node', id: t.id });
-    const n = geom.nodes.get(t.id);
-    // Alt flips the default: drag nudges, Alt-drag pins (and the reverse for a pinned node).
-    Object.assign(drag, { kind: 'node', id: t.id, start: { x: n.box.cx, y: n.box.cy }, pin: isPinned(t.id) !== ev.altKey });
-  } else if (t.type === 'cluster') {
-    select({ kind: 'cluster', id: t.id });
-    Object.assign(drag, { kind: 'cluster', id: t.id, start: { ...geom.clusters.get(t.id).offset } });
-  } else if (t.type === 'label') {
-    select({ kind: 'edge', id: t.id });
-    const ov = entryFor('edge', t.id, false);
-    Object.assign(drag, { kind: 'label', id: t.id, start: { ...(ov?.label || { x: 0, y: 0 }) } });
-  } else if (t.type === 'edge') {
-    select({ kind: 'edge', id: t.id });
-    // Pressing on a line adds a bend on the nearest segment and drags it.
-    const route = routePoints(t.id);
-    let bestI = 0, bestD = Infinity;
-    for (let i = 0; i < route.length - 1; i++) {
-      const d = distToSegment(p0, route[i], route[i + 1]);
-      if (d < bestD) { bestD = d; bestI = i; }
-    }
-    const existing = entryFor('edge', t.id, false)?.via?.length || 0;
-    Object.assign(drag, { kind: 'newvia', id: t.id, index: Math.min(bestI, existing), start: { x: p0.x, y: p0.y } });
-  } else {
-    // Background of the drawing: also panned (and a plain click deselects).
-    drag = null;
-    return;
-  }
-  sheet.setPointerCapture(ev.pointerId);
-  ev.preventDefault();
-});
-
-sheet.addEventListener('pointermove', (ev) => {
-  if (!drag || ev.pointerId !== drag.pointerId) return;
-  const p = diagram.toDiagram(ev.clientX, ev.clientY);
-  const dx = p.x - drag.p0.x, dy = p.y - drag.p0.y;
-  if (!drag.moved) {
-    if (Math.hypot(dx, dy) * pxScale() < 3) return;
-    drag.moved = true;
-    dragViewBox = diagram.svg.getAttribute('viewBox');
-    sheet.classList.add('dragging');
-    if (drag.kind === 'newvia') {
-      const e = entryFor('edge', drag.id);
-      e.via = [...(e.via || [])];
-      e.via.splice(drag.index, 0, { ...drag.start });
-      drag.kind = 'via';
-    }
-  }
-  const s = drag.start;
-  switch (drag.kind) {
-    case 'node': {
-      placeNode(drag.id, { x: s.x + dx, y: s.y + dy }, { pin: drag.pin });
-      break;
-    }
-    case 'cluster': {
-      const e = entryFor('cluster', drag.id);
-      e.nudge = { x: snap(s.x + dx), y: snap(s.y + dy) };
-      delete e.at;
-      break;
-    }
-    case 'resize': {
-      const q = { x: snap(p.x), y: snap(p.y) };
-      const w = Math.max(16, Math.abs(q.x - drag.fixed.x)), h = Math.max(16, Math.abs(q.y - drag.fixed.y));
-      const cx = drag.fixed.x + Math.sign(q.x - drag.fixed.x || 1) * w / 2;
-      const cy = drag.fixed.y + Math.sign(q.y - drag.fixed.y || 1) * h / 2;
-      entryFor('node', drag.id).size = { w, h };
-      placeNode(drag.id, { x: cx, y: cy }, { snapped: false });
-      break;
-    }
-    case 'via': {
-      const e = entryFor('edge', drag.id);
-      e.via = [...e.via];
-      e.via[drag.index] = { x: snap(s.x + dx), y: snap(s.y + dy) };
-      break;
-    }
-    case 'label': {
-      const e = entryFor('edge', drag.id);
-      e.label = { x: Math.round(s.x + dx), y: Math.round(s.y + dy) };
-      break;
-    }
-  }
-  showCoords(p);
-  scheduleApply();
-});
-
-let raf = 0;
-function scheduleApply() {
-  if (raf) return;
-  raf = requestAnimationFrame(() => { raf = 0; apply(); writeBack(); });
-}
-
-function endDrag(ev) {
-  if (!drag || ev.pointerId !== drag.pointerId) return;
-  const wasMoved = drag.moved;
-  const before = drag.before;
-  drag = null;
-  dragViewBox = null;
-  sheet.classList.remove('dragging');
-  if (raf) { cancelAnimationFrame(raf); raf = 0; }
-  if (wasMoved) {
-    apply();
-    writeBack();
-    if (srcEl.value !== before) { pushUndo(before); lastCommitted = srcEl.value; }
-  }
-}
-sheet.addEventListener('pointerup', endDrag);
-sheet.addEventListener('pointercancel', endDrag);
-
-let lastPress = { key: '', time: 0 };
-/** Pointer events don't report click counts reliably, so detect a double press ourselves. */
-function isDoublePress(key) {
-  const now = performance.now();
-  const dbl = lastPress.key === key && now - lastPress.time < 400;
-  lastPress = dbl ? { key: '', time: 0 } : { key, time: now };
-  return dbl;
-}
 
 /* ---------- panning: press and hold the background (or use the middle button anywhere) ---------- */
 let pan = null;
@@ -1103,7 +781,8 @@ function startPinch() {
   pan = null;
 }
 wrap.addEventListener('pointerdown', (ev) => {
-  if (drag || (ev.button !== 0 && ev.button !== 1)) return;
+  // A press the editor took (on a shape or handle) arrives here already handled.
+  if (ev.defaultPrevented || shapeDragging() || (ev.button !== 0 && ev.button !== 1)) return;
   if (ev.pointerType === 'touch') {
     touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     wrap.setPointerCapture(ev.pointerId);
@@ -1127,7 +806,7 @@ wrap.addEventListener('pointermove', (ev) => {
       view.y = mid.y - (pinch.mid.y - pinch.view.y) * (next / pinch.zoom);
       zoom = next;
       sizeSvg();
-      drawOverlay();
+      redrawOverlay();
       return;
     }
   }
@@ -1143,25 +822,12 @@ wrap.addEventListener('pointermove', (ev) => {
 function endPan(ev) {
   if (touches.delete(ev.pointerId) && touches.size < 2) pinch = null;
   if (!pan || ev.pointerId !== pan.id) return;
-  if (!pan.moved && ev.type === 'pointerup' && selection) select(null);
+  if (!pan.moved && ev.type === 'pointerup' && ed.selection) ed.select(null);
   wrap.classList.remove('panning');
   pan = null;
 }
 wrap.addEventListener('pointerup', endPan);
 wrap.addEventListener('pointercancel', endPan);
-
-function distToSegment(p, a, b) {
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy || 1;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
-}
-
-function select(sel) {
-  selection = sel;
-  drawOverlay();
-  renderStrip();
-}
 
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown', (ev) => {
@@ -1172,29 +838,7 @@ document.addEventListener('keydown', (ev) => {
     ev.shiftKey ? redo() : undo();
     return;
   }
-  if (inField || !selection || !diagram?.supported || showStock) return;
-  if (ev.key === 'Escape') { select(null); return; }
-  if (ev.key === 'Delete' || ev.key === 'Backspace') {
-    ev.preventDefault();
-    clearEntry(selection.kind, selection.id);
-    commit();
-    return;
-  }
-  const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[ev.key];
-  if (!dir) return;
-  ev.preventDefault();
-  const step = ev.shiftKey ? 10 : snapOn() ? 8 : 1;
-  const geom = diagram.geometry;
-  if (selection.kind === 'node') {
-    const n = geom.nodes.get(selection.id);
-    placeNode(selection.id, { x: n.box.cx + dir[0] * step, y: n.box.cy + dir[1] * step }, { snapped: false });
-  } else if (selection.kind === 'cluster') {
-    const c = geom.clusters.get(selection.id);
-    const e = entryFor('cluster', selection.id);
-    e.nudge = { x: c.offset.x + dir[0] * step, y: c.offset.y + dir[1] * step };
-    delete e.at;
-  } else return;
-  commit();
+  if (!inField) ed.handleKey(ev);
 });
 
 /* ---------- header actions ---------- */
@@ -1203,7 +847,8 @@ function setMode(stock) {
   $('mode-stock').setAttribute('aria-pressed', String(stock));
   $('mode-wermaid').setAttribute('aria-pressed', String(!stock));
   sheet.classList.toggle('editable', !!diagram?.supported && !stock);
-  apply();
+  ed.setStock(stock);
+  if (diagram) showState();
   updateBlockCount();
 }
 $('mode-stock').addEventListener('click', () => setMode(true));
@@ -1220,6 +865,7 @@ titleEl.addEventListener('keydown', (ev) => {
 titleEl.addEventListener('blur', () => {
   const name = titleEl.textContent.replace(/\s+/g, ' ').trim();
   if (!diagram) { titleEl.textContent = titleBefore; return; }
+  const { overrides } = ed;
   overrides.settings = overrides.settings || {};
   // Blank, or the example's own name, means no custom name.
   if (!name || name === defaultName()) delete overrides.settings.title;
@@ -1236,6 +882,7 @@ titleEl.addEventListener('paste', (ev) => {
 
 $('edge-style').addEventListener('change', (ev) => {
   if (!diagram) return;
+  const { overrides } = ed;
   overrides.settings = overrides.settings || {};
   const style = ev.target.value;
   if (style) overrides.settings.edges = { ...overrides.settings.edges, style };
@@ -1244,6 +891,7 @@ $('edge-style').addEventListener('change', (ev) => {
 });
 
 $('reset-all').addEventListener('click', () => {
+  const { overrides } = ed;
   if (!diagram || (!overrides.targets.size && !overrides.settings?.edges)) { toast('There are no overrides to clear'); return; }
   overrides.targets.clear();
   // The palette and the name aren't layout overrides, so they stay.
