@@ -100,6 +100,72 @@ Diagrams render with Mermaid's `base` theme driven by the page's color tokens: t
 IBM Plex Mono, no fills. The page pairs that with a serif title face; it lists Michelangelus
 first and falls back to EB Garamond.
 
+## Embedding
+
+`src/element.js` renders Wermaid diagrams in any page: a `<wermaid-diagram>` element, and a
+`run()` that upgrades the Mermaid blocks a page already has. `dist/embed-demo.html` shows both.
+
+```html
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
+  import { defineWermaidElement, run } from 'https://cdn.jsdelivr.net/gh/LandoCole/Wermaid@main/src/element.js';
+
+  defineWermaidElement(mermaid);   // registers <wermaid-diagram>
+  run();                           // renders pre.mermaid and ```mermaid blocks with their layout blocks
+</script>
+
+<wermaid-diagram pannable controls height="420">
+  flowchart LR
+    A[Start] --> B{Check}
+    B -->|yes| C[Ship]
+  %% @layout v1
+  %% C  nudge 0,40
+  %% @end
+</wermaid-diagram>
+```
+
+With npm: `import { defineWermaidElement, run } from 'wermaid/element'`.
+
+| Attribute | Values | |
+|---|---|---|
+| `theme` | `mermaid`, `wermaid`, `pele`, `none` | Palette. Default: the block's `@theme`, else `wermaid`. `none` leaves the page's Mermaid config alone. |
+| `dark` | `auto`, `true`, `false` | `auto` (default) follows `prefers-color-scheme` and re-renders when it changes. |
+| `pannable` | present | A fixed-height canvas: drag to pan, pinch or Ctrl/⌘ + scroll to zoom, double-click to fit. Plain scrolling still scrolls the page. |
+| `controls` | present | Toolbar with zoom and Fit (when pannable) and Export: copy or save PNG/SVG. |
+| `height` | CSS length or px number | Canvas height when pannable (default 420px). |
+| `background` | `palette`, `none`, a colour | Fill behind the diagram. Default `none` inline, `palette` when pannable. |
+| `src` | URL | Load the source from a `.mmd` / text file instead of the element's text. |
+| `name` | text | File name for exports. |
+
+The source can be the element's text (indented freely, `<br/>` and entities work as in
+Mermaid), the `source` property, or `src`. Changing any of them re-renders.
+
+```js
+const el = document.querySelector('wermaid-diagram');
+await el.rendered;                 // promise for the latest render
+el.diagram;                        // the library's diagram object (geometry, toSVG(), toPNG(), …)
+el.fit();                          // re-centre a pannable viewer
+el.addEventListener('wermaid:render', (e) => e.detail.diagram);
+el.addEventListener('wermaid:error', (e) => e.detail.error);   // also shown in place of the diagram
+```
+
+`run({ root, selector, attributes })` replaces each match of `pre.mermaid, pre.wermaid,
+pre > code.language-mermaid, pre > code.language-wermaid` (the last two are what Markdown
+renderers emit for fenced blocks) with a `<wermaid-diagram>`, copying `data-theme`, `data-dark`,
+`data-pannable`, `data-controls`, `data-height` and `data-background` across. `attributes`
+sets defaults for every block, e.g. `run({ attributes: { controls: '' } })`. It returns a
+promise that settles when every diagram has rendered.
+
+Notes:
+
+- `defineWermaidElement(mermaid, { tag, fonts, config })` calls `mermaid.initialize` with
+  `startOnLoad: false` (so Mermaid doesn't also render the blocks) and `securityLevel: 'strict'`;
+  pass `config` to add to that. `fonts: false` stops it adding the IBM Plex Mono stylesheet the
+  Wermaid palette uses.
+- Diagrams render in shadow DOM, so page CSS doesn't leak in. A diagram inside something hidden
+  (a closed tab, `display: none`) waits until it's visible, since Mermaid needs real text sizes.
+- Exports leave out the toolbar; inside Claude artifacts, saving goes through the viewer's save prompt.
+
 ## Library
 
 ```js
@@ -112,6 +178,8 @@ diagram.geometry;                 // final node/subgraph boxes and edge points
 diagram.setOverrides(next);       // re-apply without re-running Mermaid
 diagram.showStock();              // Mermaid's own layout
 diagram.writeSource(source);      // source with the layout block rewritten
+diagram.toSVG();                  // standalone SVG text
+await diagram.toPNG({ scale: 2 }); // PNG Blob
 ```
 
 How it works (Mermaid 11.16): Mermaid's dagre layout computes positions and draws in a single
@@ -150,10 +218,13 @@ npm test
 
 - `src/wermaid.js` – the library (no dependencies besides the Mermaid instance you pass in)
 - `src/themes.js` – palettes
+- `src/element.js` – `<wermaid-diagram>` and `run()`
 - `src/editor.html` – editor template; `src/examples.mjs` – the bundled examples
+- `src/embed-demo.html` – embedding demo template (built to `dist/embed-demo.html`)
 - `test/m1.html` – library suite: stock-identical render, local effect, subgraph refit, stale ids,
   round trip, obstacle avoidance
 - `test/interact.mjs` – editor suite: nudge/pin, resize, bends, labels, undo, examples
+- `test/export.mjs` – PNG/SVG export; `test/embed.mjs` – element and `run()` suite
 
 ## Known limits
 

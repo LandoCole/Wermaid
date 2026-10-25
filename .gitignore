@@ -4,3 +4,4 @@ dist/local.html
 test/shots/
 test/shots-*
 .DS_Store
+dist/embed-local.html

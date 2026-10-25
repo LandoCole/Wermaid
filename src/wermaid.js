@@ -1191,6 +1191,47 @@ function applyOverrides(scene, overrides, mut) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Export                                                              */
+/* ------------------------------------------------------------------ */
+
+const UI_SELECTOR = '[data-wermaid-ui], .wm-overlay, .wm-hit';
+
+function exportSVG(svg, strip = UI_SELECTOR) {
+  const clone = svg.cloneNode(true);
+  if (strip) clone.querySelectorAll(strip).forEach((n) => n.remove());
+  const vb = svg.viewBox.baseVal;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(Math.ceil(vb.width)));
+  clone.setAttribute('height', String(Math.ceil(vb.height)));
+  clone.removeAttribute('transform');
+  clone.style.removeProperty('max-width');
+  clone.style.removeProperty('width');
+  clone.style.removeProperty('height');
+  return { text: new XMLSerializer().serializeToString(clone), width: vb.width, height: vb.height };
+}
+
+async function exportPNG(svg, { scale = 2, background = '#ffffff', strip } = {}) {
+  const { text, width, height } = exportSVG(svg, strip);
+  const img = new Image();
+  // A data URL (not a blob URL) keeps the canvas exportable when labels are HTML.
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(width * scale);
+  canvas.height = Math.ceil(height * scale);
+  const ctx = canvas.getContext('2d');
+  if (background && background !== 'transparent') {
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => {
+    try { canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG encoding failed'))), 'image/png'); }
+    catch (err) { reject(err); }
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1266,6 +1307,21 @@ export function createWermaid(mermaid) {
       /** Client (screen) coordinates → diagram coordinates. */
       toDiagram(clientX, clientY) {
         return new DOMPoint(clientX, clientY).matrixTransform(svg.getScreenCTM().inverse());
+      },
+      /**
+       * The diagram as a standalone SVG document string, sized to its viewBox.
+       * Elements matching `strip` (editor and viewer chrome) are left out.
+       */
+      toSVG({ strip = '[data-wermaid-ui], .wm-overlay, .wm-hit' } = {}) {
+        return exportSVG(svg, strip).text;
+      },
+      /**
+       * Render the diagram to a PNG Blob at `scale`, on `background`
+       * (any CSS colour; defaults to the palette's background, else white).
+       */
+      async toPNG({ scale = 2, background, strip } = {}) {
+        const bg = background ?? diagram.background ?? '#ffffff';
+        return exportPNG(svg, { scale, background: bg, strip });
       },
     };
     diagram.setOverrides(overrides);

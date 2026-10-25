@@ -1,0 +1,187 @@
+<title>Wermaid embed</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one quiet reading column; each example is a plate whose title breaks its border,
+     the live result first and the code that made it underneath. */
+  :root {
+    --paper: #F9F9F7; --ink: #1E1F22; --graphite: #696A6F; --line: #BDBDC1; --code: #F1F1EE;
+    --serif: "Michelangelus", "EB Garamond", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --paper: #151516; --ink: #E7E7E3; --graphite: #9B9CA0; --line: #3A3A3F; --code: #1C1C1E; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --paper: #151516; --ink: #E7E7E3; --graphite: #9B9CA0; --line: #3A3A3F; --code: #1C1C1E; color-scheme: dark; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink); font-family: var(--mono); font-size: 13px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .topbar {
+    display: flex; align-items: center; gap: 10px; padding-block: 12px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar svg { width: 22px; height: 22px; }
+  .topbar span { font-family: var(--serif); font-size: 21px; line-height: 1; }
+  main {
+    max-width: 960px; margin: 0 auto; padding-block: 36px 64px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: grid; gap: 44px;
+  }
+  h1 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 40px; line-height: 1.05; letter-spacing: -0.01em; text-wrap: balance; }
+  .lede { margin: 8px 0 0; font-family: var(--serif); font-style: italic; font-size: 19px; color: var(--graphite); max-width: 60ch; }
+  .plate { position: relative; border: 1px solid var(--line); padding: 26px 18px 18px; display: grid; gap: 16px; min-width: 0; }
+  .plate h2 {
+    position: absolute; top: -0.8em; left: 14px; margin: 0; padding: 0 8px; background: var(--paper);
+    font-size: 13px; font-weight: 500; line-height: 1.6;
+  }
+  .plate p { margin: 0; max-width: 70ch; color: var(--graphite); }
+  pre {
+    margin: 0; padding: 12px 14px; background: var(--code); overflow-x: auto; font: 12px/1.6 var(--mono); tab-size: 2;
+  }
+  code { font-family: var(--mono); }
+  .fig { font-size: 11px; letter-spacing: 0.06em; color: var(--graphite); }
+  wermaid-diagram:not(:defined) { display: block; min-height: 120px; }
+  wermaid-diagram[pannable] { border: 1px solid var(--line); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  .row label { display: flex; align-items: center; gap: 6px; color: var(--graphite); font-size: 12px; }
+  select { font: inherit; color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--line); padding: 2px 0; }
+  :focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
+</style>
+
+<header class="topbar">
+  <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="8" height="8"/><path d="M10 12 V45 Q10 50 15 50 H19 Q24 50 24 45 V33 Q24 28 29 28 H35 Q40 28 40 33 V45 Q40 50 45 50 H49 Q54 50 54 45 V16"/><path d="M50.5 15 L54 8 L57.5 15 Z" fill="currentColor" stroke="none"/></svg>
+  <span>Wermaid</span>
+</header>
+
+<main>
+  <div>
+    <h1>Embedding Wermaid diagrams</h1>
+    <p class="lede">The same diagrams the editor makes, rendered in any page: as an element, or by upgrading the Mermaid blocks a page already has.</p>
+  </div>
+
+  <section class="plate" aria-labelledby="h-inline">
+    <h2 id="h-inline">1 · Inline</h2>
+    <p>Put the source, layout block included, inside the element. It sizes itself to the page like a Mermaid diagram.</p>
+    <wermaid-diagram id="ex-inline">
+      flowchart LR
+        shop([Storefront]) --> api[Orders API]
+        api --> valid{Valid?}
+        valid -->|no| reject[Reject order]
+        valid -->|yes| pay[Charge card]
+        subgraph fulfil [Fulfilment]
+          pay --> pick[Pick and pack]
+          pick --> ship[Ship]
+        end
+        ship --> notify[Email receipt]
+        reject --> notify
+
+      %% @layout v1
+      %% @edges rounded
+      %% reject  nudge -352,38
+      %% notify  nudge 0,100
+      %% @end
+    </wermaid-diagram>
+    <pre><code>&lt;wermaid-diagram&gt;
+  flowchart LR
+    shop([Storefront]) --&gt; api[Orders API]
+    …
+  %% @layout v1
+  %% @edges rounded
+  %% reject  nudge -352,38
+  %% @end
+&lt;/wermaid-diagram&gt;</code></pre>
+  </section>
+
+  <section class="plate" aria-labelledby="h-canvas">
+    <h2 id="h-canvas">2 · Canvas viewer</h2>
+    <p><code>pannable</code> makes a fixed-height canvas: drag to pan, pinch or Ctrl/⌘ + scroll to zoom, double-click to fit. <code>controls</code> adds zoom, Fit and Export.</p>
+    <div class="row">
+      <label for="pal">Palette
+        <select id="pal">
+          <option value="wermaid">Wermaid</option>
+          <option value="mermaid">Mermaid</option>
+          <option value="pele">Pele</option>
+        </select>
+      </label>
+    </div>
+    <wermaid-diagram id="ex-canvas" pannable controls height="380" name="event architecture">
+      flowchart LR
+        users([Users]) --> cdn[CloudFront<br/>path routing]
+        cdn --> dns[Route 53<br/>latency routing]
+        dns --> api[API Gateway<br/>REST]
+        fs[Storage Gateway<br/>file systems] -- file changes --> s3[S3<br/>ingestion]
+        dms[DMS<br/>CDC events] -- db changes --> kin[Kinesis<br/>CDC stream]
+        kin --> s3
+        subgraph region [Region]
+          s3 --> bus[[EventBridge<br/>event bus]]
+          api -- async write --> bus
+          api --> query[Lambda<br/>query]
+          subgraph logic [Logic layer]
+            fn[Lambda<br/>microservices]
+            saga[Step Functions<br/>saga]
+          end
+          subgraph data [Data layer]
+            ddb[(DynamoDB<br/>single view)]
+            aurora[(Aurora<br/>report DB)]
+          end
+          bus --> fn
+          bus --> saga
+          fn -- logic events --> bus
+          query --> ddb
+          fn --> ddb
+          saga --> aurora
+        end
+
+      %% @layout v1
+      %% @edges rounded
+      %% @end
+    </wermaid-diagram>
+    <pre><code>&lt;wermaid-diagram pannable controls height="380" theme="pele"&gt;…&lt;/wermaid-diagram&gt;</code></pre>
+  </section>
+
+  <section class="plate" aria-labelledby="h-run">
+    <h2 id="h-run">3 · Upgrade existing Mermaid blocks</h2>
+    <p><code>run()</code> finds <code>pre.mermaid</code> and Markdown's <code>```mermaid</code> blocks and renders them with their layout blocks. Per-block options go in data attributes.</p>
+    <pre class="mermaid" data-theme="mermaid">stateDiagram-v2
+  [*] --> Draft
+  Draft --> Review : open PR
+  Review --> Draft : changes requested
+  Review --> Live : approved
+  Live --> [*]
+
+%% @layout v1
+%% Live  nudge 120,0
+%% @end</pre>
+    <pre><code>&lt;pre class="mermaid" data-theme="mermaid"&gt;stateDiagram-v2 …&lt;/pre&gt;
+
+import mermaid from 'mermaid';
+import { defineWermaidElement, run } from 'wermaid/element';
+defineWermaidElement(mermaid);
+run();</code></pre>
+  </section>
+  <p class="fig" id="status">Fig. 1–3 · rendering…</p>
+</main>
+
+<script type="module">
+/*__WERMAID_LIBRARY__*/
+
+const MERMAID_URL = new URLSearchParams(location.search).get('mermaid')
+  || 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
+const { default: mermaid } = await import(MERMAID_URL);
+
+defineWermaidElement(mermaid);
+const results = await run();
+const els = [...document.querySelectorAll('wermaid-diagram')];
+await Promise.allSettled(els.map((e) => e.rendered));
+document.getElementById('status').textContent = `Fig. 1–3 · ${els.filter((e) => e.diagram).length} diagrams rendered by Wermaid`;
+
+document.getElementById('pal').addEventListener('change', (ev) => {
+  document.getElementById('ex-canvas').setAttribute('theme', ev.target.value);
+});
+window.READY = true;
+</script>

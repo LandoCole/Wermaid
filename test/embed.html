@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;margin:16px;width:1100px} section{margin:24px 0}</style></head><body>
+<section id="s1">
+<wermaid-diagram id="inline">
+  flowchart LR
+    A[Start] --> B{Check}
+    B -->|yes| C[Do it]
+    B -->|no| D[Stop]
+
+  %% @layout v1
+  %% B  nudge 0,60
+  %% @end
+</wermaid-diagram>
+</section>
+<section id="s2"><wermaid-diagram id="pele" theme="pele">flowchart LR
+  X --> Y</wermaid-diagram></section>
+<section id="s3"><wermaid-diagram id="canvas" pannable controls height="360" name="canvas demo">flowchart LR
+  A --> B --> C --> D --> E --> F
+  B --> G --> H</wermaid-diagram></section>
+<section id="s4"><wermaid-diagram id="remote" src="/test/fixtures/checkout.mmd"></wermaid-diagram></section>
+<section id="s5">
+<pre class="mermaid" id="pre1">flowchart TD
+  P --&gt; Q</pre>
+<pre data-theme="mermaid"><code class="language-mermaid">flowchart LR
+  M --> N
+
+%% @layout v1
+%% N nudge 0,30
+%% @end</code></pre>
+</section>
+<section id="s6"><div id="tab" style="display:none"><wermaid-diagram id="hidden">flowchart LR
+  H1 --> H2</wermaid-diagram></div></section>
+<section id="s7"><wermaid-diagram id="broken">flowchart LR
+  A --> [[[</wermaid-diagram></section>
+<section id="s9"><wermaid-diagram id="br">flowchart LR
+  A[Lambda<br/>query] -->|a &amp; b| B[Two<br>lines]</wermaid-diagram>
+<pre class="mermaid" id="pre-br">flowchart LR
+  P[Edge<br/>cache] --> Q</pre></section>
+<section id="s8"><wermaid-diagram id="dark" dark="true">flowchart LR
+  K --> L</wermaid-diagram></section>
+<script type="module">
+import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
+import { defineWermaidElement, run } from '/src/element.js';
+window.EVENTS = [];
+document.addEventListener('wermaid:render', (e) => EVENTS.push(['render', e.target.id]));
+document.addEventListener('wermaid:error', (e) => EVENTS.push(['error', e.target.id]));
+defineWermaidElement(mermaid);
+window.RUN = await run();
+window.READY = true;
+</script></body></html>
