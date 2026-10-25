@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;margin:16px;width:700px} section{margin:24px 0}</style></head><body>
+<a href="#" id="start">start</a>
+<section><wermaid-diagram id="plain">flowchart LR
+  A --> B</wermaid-diagram></section>
+<section><wermaid-diagram id="none" features="none">flowchart LR
+  A --> B</wermaid-diagram></section>
+<section><wermaid-diagram id="legacy" controls pannable height="240">flowchart LR
+  A --> B --> C</wermaid-diagram></section>
+<section><wermaid-diagram id="fmt" formats="png svg md">flowchart LR
+  A --> B --> C
+
+%% @layout v1
+%% B  nudge 0,40
+%% @end</wermaid-diagram></section>
+<section><wermaid-diagram id="zoom" features="zoom" height="240">flowchart LR
+  A --> B --> C</wermaid-diagram></section>
+<script type="module">
+import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
+import { defineWermaidElement } from '/src/element.js';
+defineWermaidElement(mermaid, { fonts: false });
+await Promise.all([...document.querySelectorAll('wermaid-diagram')].map((e) => e.rendered));
+window.READY = true;
+</script></body></html>

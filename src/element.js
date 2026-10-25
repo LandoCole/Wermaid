@@ -18,13 +18,19 @@
  *   dark       auto | true | false               (default auto: follows prefers-color-scheme)
  *   pannable   present = a canvas viewer: drag to pan, pinch or Ctrl/⌘ + scroll to zoom,
  *              double-click to fit
- *   controls   present = a small toolbar: zoom and Fit (when pannable) and Export
+ *   controls   present = the classic toolbar: zoom and Fit (when pannable) and an Export menu.
+ *              Shorthand for features="zoom copy download" formats="png svg"; `features` wins.
+ *   features   space-separated list of what is on: copy download edit undo reset themes edges
+ *              zoom compare. Default "copy download"; "none" turns every control off.
+ *              `zoom` implies pannable. `undo` and `reset` come with `edit` unless listed.
+ *   formats    what Download offers: png svg md (default png). One is a button, several a menu.
  *   height     viewer height when pannable (any CSS length, default 420px)
  *   background palette | none | <css colour>     (default none; palette when pannable)
  *   src        URL of a .mmd / text file to load instead of the element's text
  *
  * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}}.
- * Property `rendered` is a promise for the latest render; `diagram` is the latest result.
+ * Property `rendered` is a promise for the latest render; `diagram` is the latest result;
+ * `features` is the resolved list of features (set it with an array or a space-separated string).
  */
 
 import { createWermaid, parseSource, DEFAULT_THEME, clampView, defineTheme, listThemes, getTheme } from './wermaid.js';
@@ -60,7 +66,7 @@ export function defineWermaidElement(mermaid, { tag = 'wermaid-diagram', fonts =
 /**
  * Replace Mermaid code blocks with <wermaid-diagram> elements and render them.
  * Per-block options can be given as data attributes on the block (`data-theme`,
- * `data-dark`, `data-pannable`, `data-controls`, `data-height`, `data-background`);
+ * `data-dark`, `data-pannable`, `data-controls`, `data-features`, `data-formats`, `data-height`, `data-background`);
  * `attributes` sets defaults for every block. Resolves when all have rendered.
  */
 export async function run({
@@ -76,7 +82,7 @@ export async function run({
     block.dataset.wermaidProcessed = 'true';
     const el = document.createElement(options.tag);
     for (const [name, value] of Object.entries(attributes)) setAttr(el, name, value);
-    for (const name of ['theme', 'dark', 'pannable', 'controls', 'height', 'background']) {
+    for (const name of ['theme', 'dark', 'pannable', 'controls', 'features', 'formats', 'height', 'background']) {
       const v = block.dataset[name] ?? (node !== block ? node.dataset[name] : undefined);
       if (v !== undefined) setAttr(el, name, v === '' ? true : v);
     }
@@ -101,9 +107,9 @@ const STYLE = `
   [hidden] { display: none !important; }
   .viewport { position: relative; background: var(--wermaid-bg, transparent); }
   .stage svg { display: block; margin-inline: auto; }
-  :host([pannable]) .viewport { height: var(--wermaid-height); overflow: hidden; cursor: grab; touch-action: none; }
-  :host([pannable]) .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-  :host([pannable]) .stage svg { margin: 0; max-width: none !important; }
+  .viewport.pan { height: var(--wermaid-height); overflow: hidden; cursor: grab; touch-action: none; }
+  .viewport.pan .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .viewport.pan .stage svg { margin: 0; max-width: none !important; }
   .viewport.panning, .viewport.panning * { cursor: grabbing !important; }
   .toolbar {
     position: absolute; top: 8px; right: 8px; z-index: 2; display: flex; align-items: center; gap: 2px;
@@ -112,6 +118,11 @@ const STYLE = `
   }
   .toolbar button { border: 0; background: none; color: inherit; font: inherit; padding: 4px 7px; cursor: pointer; }
   .toolbar button:hover, .toolbar button:focus-visible { background: var(--wermaid-ui-line); outline: none; }
+  .toolbar button:focus-visible { box-shadow: inset 0 0 0 2px var(--wermaid-ui-fg); }
+  .toolbar { opacity: 0; }
+  :host(:hover) .toolbar, .toolbar:focus-within, .toolbar.always { opacity: 1; }
+  @media (hover: none) { .toolbar { opacity: 1; } }
+  [aria-haspopup]::after { content: " ▾"; }
   .toolbar output { min-width: 4.5ch; text-align: center; color: var(--wermaid-ui-muted); font-variant-numeric: tabular-nums; }
   .menu {
     position: absolute; right: -1px; top: calc(100% + 4px); min-width: 170px; display: grid; padding: 4px 0;
@@ -127,20 +138,30 @@ const TEMPLATE = `
   <style>${STYLE}</style>
   <div class="viewport" part="viewport">
     <div class="stage" part="stage"></div>
-    <div class="toolbar" part="toolbar" hidden>
+    <div class="toolbar" part="toolbar" role="toolbar" aria-label="Diagram tools" hidden>
       <span class="zoomers">
         <button type="button" data-act="out" aria-label="Zoom out">−</button>
         <output aria-live="off">100%</output>
         <button type="button" data-act="in" aria-label="Zoom in">+</button>
-        <button type="button" data-act="fit">Fit</button>
+        <button type="button" data-act="fit" aria-label="Fit diagram to view">Fit</button>
       </span>
       <span class="exporter" style="position: relative">
-        <button type="button" data-act="menu" aria-haspopup="menu" aria-expanded="false">Export ▾</button>
+        <button type="button" data-act="menu" aria-haspopup="menu" aria-expanded="false">Export</button>
         <div class="menu" role="menu" hidden>
           <button type="button" role="menuitem" data-act="copy-png">Copy as PNG</button>
           <button type="button" role="menuitem" data-act="copy-svg">Copy as SVG</button>
           <button type="button" role="menuitem" data-act="save-png">Save as PNG…</button>
           <button type="button" role="menuitem" data-act="save-svg">Save as SVG…</button>
+        </div>
+      </span>
+      <button type="button" class="copy" data-act="copy-png" aria-label="Copy diagram as PNG">Copy</button>
+      <button type="button" class="download" data-act="download" aria-label="Download diagram">Download</button>
+      <span class="downloads" style="position: relative">
+        <button type="button" data-act="dlmenu" aria-haspopup="menu" aria-expanded="false" aria-label="Download diagram as…">Download</button>
+        <div class="menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-act="download" data-format="png">PNG</button>
+          <button type="button" role="menuitem" data-act="download" data-format="svg">SVG</button>
+          <button type="button" role="menuitem" data-act="download" data-format="md">Markdown</button>
         </div>
       </span>
     </div>
@@ -182,15 +203,17 @@ function ensureThemeAssets(name) {
 }
 
 export class WermaidDiagram extends HTMLElement {
-  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'height', 'background'];
+  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'height', 'background'];
 
   constructor() {
     super();
     this.attachShadow({ mode: 'open' }).innerHTML = TEMPLATE;
     const $ = (sel) => this.shadowRoot.querySelector(sel);
     this.$ = { viewport: $('.viewport'), stage: $('.stage'), toolbar: $('.toolbar'), zoomers: $('.zoomers'),
-      zoomOut: $('output'), menu: $('.menu'), menuBtn: $('[data-act="menu"]'), note: $('.note'), error: $('.error') };
+      zoomOut: $('output'), exporter: $('.exporter'), copy: $('.copy'), download: $('.download'), downloads: $('.downloads'),
+      note: $('.note'), error: $('.error') };
     this._source = null;
+    this._text = '';
     this._diagram = null;
     this._view = { x: 0, y: 0, zoom: 1 };
     this._lastVB = null;
@@ -208,6 +231,26 @@ export class WermaidDiagram extends HTMLElement {
   /** Promise for the latest render; resolves with the diagram, rejects on error. */
   get rendered() { return this._rendered; }
 
+  /**
+   * The features that are on, as a list of names. Resolved from the `features` attribute
+   * ("none" = nothing), else the `controls` shorthand, else the page default, else copy and download.
+   * Set it with an array or a space-separated string; it is reflected to the attribute.
+   */
+  get features() {
+    const attr = this.getAttribute('features');
+    let list = attr !== null ? names(attr)
+      : this.hasAttribute('controls') ? ['zoom', 'copy', 'download']
+        : pageDefaults.features != null ? names(pageDefaults.features) : ['copy', 'download'];
+    list = list.filter((n, i) => FEATURES.includes(n) && list.indexOf(n) === i);
+    // Editing brings Undo and Reset along, unless the list says which of them it wants.
+    if (list.includes('edit') && !list.includes('undo') && !list.includes('reset')) list.push('undo', 'reset');
+    return list;
+  }
+  set features(value) {
+    const list = names(value);
+    this.setAttribute('features', list.length ? list.join(' ') : 'none');
+  }
+
   connectedCallback() {
     darkQuery?.addEventListener('change', this._onDark);
     if (!this._observer) {
@@ -217,7 +260,7 @@ export class WermaidDiagram extends HTMLElement {
     this._observer.observe(this, { childList: true, characterData: true, subtree: true });
     if (!this._sizeObserver) {
       this._sizeObserver = new ResizeObserver(() => {
-        if (!this.hasAttribute('pannable')) return;
+        if (!this._pannable()) return;
         if (this._autoFit) this._fit(); else this._sizeSvg();
       });
     }
@@ -244,6 +287,19 @@ export class WermaidDiagram extends HTMLElement {
   refresh() { this._schedule(); return this._rendered; }
   /** Scale the drawing to the viewer and centre it (pannable viewers). */
   fit() { this._fit(); }
+
+  /** The classic `controls` toolbar: zoom and an Export menu, always shown. */
+  _legacy() { return this.hasAttribute('controls') && !this.hasAttribute('features'); }
+  /** A canvas viewer: the `pannable` attribute, or the zoom feature. */
+  _pannable() { return this.hasAttribute('pannable') || (!this._legacy() && this.features.includes('zoom')); }
+  /** What Download offers: the attribute, the `controls` shorthand, the page default, else PNG. */
+  _formats() {
+    const attr = this.getAttribute('formats');
+    const list = names(attr !== null ? attr
+      : this.hasAttribute('controls') && !this.hasAttribute('features') ? 'png svg'
+        : pageDefaults.formats ?? 'png').filter((f, i, all) => FORMATS.includes(f) && all.indexOf(f) === i);
+    return list.length ? list : ['png'];
+  }
 
   /* ---------------- rendering ---------------- */
 
@@ -302,13 +358,14 @@ export class WermaidDiagram extends HTMLElement {
       const darkAttr = this.getAttribute('dark') ?? 'auto';
       const dark = darkAttr === 'auto' ? !!darkQuery?.matches : darkAttr !== 'false';
       this.toggleAttribute('data-dark', dark);
+      this._text = text;
       if (usedTheme) await ensureThemeAssets(usedTheme);
       const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark });
       this._diagram = diagram;
       error.hidden = true;
       this._lastVB = null;
       this._applyChrome();
-      if (this.hasAttribute('pannable')) this._fit();
+      if (this._pannable()) this._fit();
       this.dispatchEvent(new CustomEvent('wermaid:render', { detail: { diagram }, bubbles: true, composed: true }));
       return diagram;
     } catch (err) {
@@ -322,10 +379,25 @@ export class WermaidDiagram extends HTMLElement {
   /* ---------------- chrome: toolbar, background, size ---------------- */
 
   _applyChrome() {
-    const { toolbar, zoomers, viewport } = this.$;
-    const pannable = this.hasAttribute('pannable');
-    toolbar.hidden = !this.hasAttribute('controls');
-    zoomers.hidden = !pannable;
+    const { toolbar, zoomers, exporter, copy, download, downloads, viewport } = this.$;
+    const pannable = this._pannable();
+    const legacy = this._legacy();
+    const features = this.features;
+    const formats = this._formats();
+    viewport.classList.toggle('pan', pannable);
+    zoomers.hidden = !(pannable && features.includes('zoom'));
+    exporter.hidden = !legacy;
+    copy.hidden = legacy || !features.includes('copy');
+    const saving = !legacy && features.includes('download');
+    download.hidden = !saving || formats.length > 1;
+    downloads.hidden = !saving || formats.length < 2;
+    download.dataset.format = formats[0];
+    download.setAttribute('aria-label', `Download diagram as ${formats[0].toUpperCase()}`);
+    for (const item of downloads.querySelectorAll('[data-format]')) item.hidden = !formats.includes(item.dataset.format);
+    // The classic toolbar stays on screen; the new one shows on hover and focus.
+    toolbar.classList.toggle('always', legacy);
+    toolbar.hidden = [zoomers, exporter, copy, download, downloads].every((n) => n.hidden);
+    if (toolbar.hidden) this._menu(null);
     const h = this.getAttribute('height');
     if (h) this.style.setProperty('--wermaid-height', /^\d+(\.\d+)?$/.test(h) ? `${h}px` : h);
     else this.style.removeProperty('--wermaid-height');
@@ -355,10 +427,10 @@ export class WermaidDiagram extends HTMLElement {
       v.y += (vb.y - this._lastVB.y) * v.zoom;
     }
     this._lastVB = { x: vb.x, y: vb.y };
-    if (this.hasAttribute('pannable')) {
+    if (this._pannable()) {
       // The canvas ends a little past the diagram: panning can't lose it off screen.
       const W = this.$.viewport.clientWidth, H = this.$.viewport.clientHeight;
-      const top = this.hasAttribute('controls') ? 44 : 16;
+      const top = this.$.toolbar.hidden ? 16 : 44;
       Object.assign(v, clampView(v, { width: vb.width * v.zoom, height: vb.height * v.zoom }, { width: W, height: H }, { inset: { top } }));
     }
     svg.style.maxWidth = 'none';
@@ -370,10 +442,10 @@ export class WermaidDiagram extends HTMLElement {
 
   _fit() {
     const svg = this._diagram?.svg;
-    if (!svg || !this.hasAttribute('pannable')) return;
+    if (!svg || !this._pannable()) return;
     const vb = svg.viewBox.baseVal;
     const W = this.$.viewport.clientWidth, H = this.$.viewport.clientHeight;
-    const pad = 24, top = this.hasAttribute('controls') ? 44 : pad;
+    const pad = 24, top = this.$.toolbar.hidden ? pad : 44;
     const z = Math.max(MIN_ZOOM, Math.min((W - 2 * pad) / vb.width, (H - top - pad) / vb.height, 1.5));
     if (!W || !H) { this._autoFit = true; return; }
     this._view = { zoom: z, x: (W - vb.width * z) / 2, y: top + (H - top - pad - vb.height * z) / 2 };
@@ -395,8 +467,8 @@ export class WermaidDiagram extends HTMLElement {
   /* ---------------- interaction ---------------- */
 
   _wire() {
-    const { viewport, toolbar, menu, menuBtn } = this.$;
-    const pannable = () => this.hasAttribute('pannable') && this._diagram;
+    const { viewport, toolbar } = this.$;
+    const pannable = () => this._pannable() && this._diagram;
 
     toolbar.addEventListener('click', (ev) => {
       const act = ev.target.closest('[data-act]')?.dataset.act;
@@ -405,15 +477,21 @@ export class WermaidDiagram extends HTMLElement {
       if (act === 'in') this._zoomAt(this._view.zoom * 1.25, W / 2, H / 2);
       else if (act === 'out') this._zoomAt(this._view.zoom / 1.25, W / 2, H / 2);
       else if (act === 'fit') this._fit();
-      else if (act === 'menu') this._menu(menu.hidden);
-      else { this._menu(false); this._export(act); }
+      else if (act === 'menu' || act === 'dlmenu') {
+        const menu = ev.target.closest('[data-act]').nextElementSibling;
+        this._menu(menu.hidden ? menu : null);
+      } else {
+        const format = ev.target.closest('[data-act]').dataset.format;
+        this._menu(null);
+        this._export(act === 'download' ? `save-${format}` : act);
+      }
     });
     toolbar.addEventListener('pointerdown', (ev) => ev.stopPropagation());
     toolbar.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape' && !menu.hidden) { this._menu(false); menuBtn.focus(); }
+      if (ev.key === 'Escape' && this._openMenu) { const btn = this._openMenu.previousElementSibling; this._menu(null); btn.focus(); }
     });
     this.addEventListener('focusout', (ev) => {
-      if (!menu.hidden && !this.shadowRoot.contains(ev.relatedTarget)) this._menu(false);
+      if (this._openMenu && !this.shadowRoot.contains(ev.relatedTarget)) this._menu(null);
     });
 
     // Ctrl/⌘ + scroll or a trackpad pinch zooms at the pointer; plain scrolling scrolls the page.
@@ -478,10 +556,14 @@ export class WermaidDiagram extends HTMLElement {
     viewport.addEventListener('pointercancel', end);
   }
 
-  _menu(open) {
-    this.$.menu.hidden = !open;
-    this.$.menuBtn.setAttribute('aria-expanded', String(open));
-    if (open) this.$.menu.querySelector('button')?.focus();
+  /** Open the given menu (closing any other), or close the open one with null. */
+  _menu(menu) {
+    for (const m of this.shadowRoot.querySelectorAll('.menu')) {
+      m.hidden = m !== menu;
+      m.previousElementSibling.setAttribute('aria-expanded', String(m === menu));
+    }
+    this._openMenu = menu;
+    menu?.querySelector('button:not([hidden])')?.focus();
   }
 
   _note(text) {
@@ -497,14 +579,23 @@ export class WermaidDiagram extends HTMLElement {
     if (!d) return;
     const name = (this.getAttribute('name') || d.overrides?.settings?.title || 'my-wermaid').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
     const background = d.background || getComputedStyle(this).backgroundColor || '#ffffff';
+    if (kind === 'copy-png') {
+      // Copying an image needs the async clipboard; where it is missing or refused, say so.
+      try {
+        if (!window.ClipboardItem || !navigator.clipboard?.write) throw new Error('no image clipboard');
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': d.toPNG({ background }) })]);
+        this._note('PNG copied');
+      } catch {
+        this._note("Copying isn't available here");
+      }
+      return;
+    }
     try {
       if (kind === 'copy-svg') {
         await navigator.clipboard.writeText(d.toSVG());
         this._note('SVG copied');
-      } else if (kind === 'copy-png') {
-        if (!window.ClipboardItem || !navigator.clipboard?.write) { this._note('This browser can’t copy images'); return; }
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': d.toPNG({ background }) })]);
-        this._note('PNG copied');
+      } else if (kind === 'save-md') {
+        await this._save(`${name}.md`, new Blob([`\`\`\`mermaid\n${this._text.trim()}\n\`\`\`\n`], { type: 'text/markdown' }));
       } else if (kind === 'save-png') {
         await this._save(`${name}.png`, await d.toPNG({ background }));
       } else if (kind === 'save-svg') {
@@ -532,6 +623,16 @@ export class WermaidDiagram extends HTMLElement {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
     this._note(`Saved ${filename}`);
   }
+}
+
+const FEATURES = ['copy', 'download', 'edit', 'undo', 'reset', 'themes', 'edges', 'zoom', 'compare'];
+const FORMATS = ['png', 'svg', 'md'];
+
+/** A list given as an array or as space-separated words; "none" is the empty list. */
+function names(value) {
+  const list = Array.isArray(value) ? value.map(String) : String(value).split(/[\s,]+/);
+  const words = list.map((w) => w.trim().toLowerCase()).filter(Boolean);
+  return words.length === 1 && words[0] === 'none' ? [] : words;
 }
 
 /**
