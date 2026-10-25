@@ -83,7 +83,9 @@ exist produce warnings and are ignored.
   selection bar converts between the two without moving the shape.
 - Drag a corner to resize, a line to add a bend (double-click a bend to remove it), an edge label
   to offset it, a subgraph's frame to move everything inside.
-- Press and hold the background to pan (the middle mouse button pans from anywhere).
+- The diagram sits on an open canvas: press and hold the background (or the middle mouse button anywhere)
+  to pan in any direction; scroll or two-finger swipe also pans; pinch or Ctrl/⌘ + scroll zooms at the
+  pointer; Fit centres the diagram. On touch screens, one finger pans and two pinch.
 - Arrow keys nudge, Delete resets the selection, Ctrl/⌘ Z undoes.
 - "Edges" in the diagram header sets the look for every edge; a selected edge has its own style picker.
 - "Palette" switches between Mermaid, Wermaid and Pele, and follows the page's light/dark mode.

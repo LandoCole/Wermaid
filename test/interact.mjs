@@ -99,24 +99,44 @@ const fill = await p.$eval('#sheet g.node .label-container', (n) => getComputedS
 ok('palette picker writes @theme and re-renders', /%% @theme pele/.test(s) && fill === 'rgb(242, 240, 229)', [fill, s.split('%% @layout')[1]]);
 await p.selectOption('#palette', 'wermaid'); await p.waitForTimeout(900);
 ok('choosing Wermaid removes @theme', !/@theme/.test(await src()));
-// 11d. press and hold the background to pan
+// 11d. canvas: drag the background to pan in any direction, wheel pans, Ctrl+wheel zooms at the cursor
 await p.selectOption('#example', '1'); await p.waitForTimeout(900);
-for (let k = 0; k < 6; k++) await p.click('#zoom-in');
-await p.waitForTimeout(200);
+const viewOf = () => p.$eval('#sheet', (s) => { const m = new DOMMatrix(getComputedStyle(s).transform); return [m.e, m.f]; });
 const wb = await (await p.$('#sheet-wrap')).boundingBox();
-const before2 = await p.$eval('#sheet-wrap', (w) => [w.scrollLeft, w.scrollTop]);
-// find an empty spot inside the scroll area
 const spot = await p.evaluate(({ x0, y0, w, h }) => {
-  for (let y = y0 + 30; y < y0 + h - 30; y += 15) for (let x = x0 + 30; x < x0 + w - 30; x += 15) {
+  for (let y = y0 + h - 30; y > y0 + 60; y -= 15) for (let x = x0 + 30; x < x0 + w - 30; x += 15) {
     const el = document.elementFromPoint(x, y);
-    if (el && (el.id === 'sheet' || el.id === 'sheet-wrap' || el.tagName === 'svg' || el.classList.contains('root'))) return { x, y };
+    if (el && (el.id === 'sheet-wrap' || el.id === 'sheet' || el.tagName === 'svg')) return { x, y };
   }
   return null;
 }, { x0: wb.x, y0: wb.y, w: wb.width, h: wb.height });
-if (spot) await drag(spot, { x: spot.x - 150, y: spot.y - 80 }, 10);
-const after2 = await p.$eval('#sheet-wrap', (w) => [w.scrollLeft, w.scrollTop]);
-ok('background drag pans the view', spot && after2[0] > before2[0] && after2[1] > before2[1], { spot, before2, after2 });
+let v0 = await viewOf();
+await drag(spot, { x: spot.x + 120, y: spot.y - 90 }, 10);
+let v1 = await viewOf();
+ok('drag pans right and up', Math.abs(v1[0] - v0[0] - 120) < 2 && Math.abs(v1[1] - v0[1] + 90) < 2, [v0, v1]);
+await drag(spot, { x: spot.x - 200, y: spot.y + 140 }, 10);
+let v2 = await viewOf();
+ok('drag pans left and down', Math.abs(v2[0] - v1[0] + 200) < 2 && Math.abs(v2[1] - v1[1] - 140) < 2, [v1, v2]);
+await p.mouse.move(spot.x, spot.y);
+await p.mouse.wheel(40, 60); await p.waitForTimeout(100);
+let v3 = await viewOf();
+ok('wheel pans both axes', Math.abs(v3[0] - v2[0] + 40) < 2 && Math.abs(v3[1] - v2[1] + 60) < 2, [v2, v3]);
+await p.click('#zoom-fit'); await p.waitForTimeout(150);
+const NODE_IN_VIEW = () => { const w = document.getElementById('sheet-wrap').getBoundingClientRect(); for (const n of document.querySelectorAll('#sheet g.node')) { const r = n.getBoundingClientRect(); const c = { x: r.x + r.width / 2, y: r.y + r.height / 2, id: n.id }; if (c.x > w.x + 40 && c.x < w.right - 40 && c.y > w.y + 60 && c.y < w.bottom - 40) return c; } return null; };
+const anchor = await p.evaluate(NODE_IN_VIEW);
+const z0 = await p.textContent('#zoom-val');
+await p.evaluate(() => document.getElementById('sheet-wrap').addEventListener('wheel', (e) => { window.LASTW = { ctrl: e.ctrlKey, dy: e.deltaY, t: e.target.tagName + '.' + e.target.className }; }, true));
+await p.mouse.move(anchor.x, anchor.y);
+await p.keyboard.down('Control'); await p.mouse.wheel(0, -100); await p.keyboard.up('Control'); await p.waitForTimeout(150);
+const z1 = await p.textContent('#zoom-val');
+const anchor2 = await p.evaluate((id) => { const r = document.getElementById(id).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, anchor.id);
+ok('ctrl+wheel zooms around the cursor', parseInt(z1) > parseInt(z0) && Math.abs(anchor2.x - anchor.x) < 3 && Math.abs(anchor2.y - anchor.y) < 3, [z0, z1, anchor, anchor2, await p.evaluate(() => window.LASTW)]);
 ok('panning leaves the source alone', !/nudge/.test((await src()).split('%% @layout')[1] || ''));
+// a node drag still lands where the pointer goes after panning and zooming
+const nb = await p.evaluate(() => { const n = document.querySelector('#sheet [id*="-flowchart-fs-"]'); const r = n.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+await drag(nb, { x: nb.x + 50, y: nb.y + 30 });
+const nb2 = await p.evaluate(() => { const n = document.querySelector('#sheet [id*="-flowchart-fs-"]'); const r = n.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+ok('node follows the pointer on a panned, zoomed canvas', Math.abs(nb2.x - nb.x - 50) < 8 && Math.abs(nb2.y - nb.y - 30) < 8, [nb, nb2]);
 // 12. switch examples
 for (const v of ['1', '2', '3', '4']) {
   await p.selectOption('#example', v); await p.waitForTimeout(900);

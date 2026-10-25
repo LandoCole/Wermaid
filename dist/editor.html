@@ -123,9 +123,10 @@
   .zoom button:hover { color: var(--ink); }
   .zoom output { font-size: 12px; min-width: 4.5ch; text-align: center; font-variant-numeric: tabular-nums; color: var(--graphite); }
 
-  .sheet-wrap { position: relative; overflow: auto; min-height: 0; background: var(--sheet-bg, transparent); cursor: grab; }
+  /* Canvas: the drawing floats in an unbounded viewport, moved with a transform. */
+  .sheet-wrap { position: relative; overflow: hidden; min-height: 0; background: var(--sheet-bg, transparent); cursor: grab; touch-action: none; }
   .sheet-wrap.panning, .sheet-wrap.panning * { cursor: grabbing !important; }
-  #sheet { padding: 44px 36px 36px; width: max-content; min-width: 100%; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  #sheet { position: absolute; left: 0; top: 0; transform-origin: 0 0; user-select: none; -webkit-user-select: none; }
   #sheet svg { display: block; overflow: visible; }
   #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel { cursor: move; }
   #sheet.editable svg g.cluster > rect, #sheet.editable svg .statediagram-cluster rect { cursor: move; }
@@ -142,7 +143,7 @@
   .wm-overlay .pin { fill: var(--ink); pointer-events: none; }
   .wm-overlay .pin.hollow { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 
-  .notice { position: sticky; left: 0; top: 0; z-index: 2; margin: 0; padding: 22px 16px 0; font-size: 12px; color: var(--warn); }
+  .notice { position: absolute; left: 0; right: 0; top: 0; z-index: 2; margin: 0; padding: 22px 16px 0; font-size: 12px; color: var(--warn); pointer-events: none; }
 
   .strip {
     display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; min-height: 42px; box-sizing: border-box;
@@ -181,7 +182,7 @@
     body { height: auto; min-height: 100%; overflow: visible; grid-template-rows: auto auto auto; }
     main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 46vh 72vh auto; gap: 28px; }
     .figcap { grid-column: 1; grid-row: 3; margin-top: -18px; }
-    #sheet { padding: 84px 20px 20px; }
+
     .plate-title { flex-wrap: wrap; row-gap: 2px; }
     .tools { flex-wrap: wrap; gap: 2px 12px; }
   }
@@ -1813,7 +1814,6 @@ async function refresh(text) {
     showMessages(parsed.errors, err);
     return;
   }
-  const scrollPos = [wrap.scrollLeft, wrap.scrollTop];
   // Render next to the current drawing and swap only on success,
   // so a failed render never blanks the sheet.
   const staging = document.createElement('div');
@@ -1841,7 +1841,6 @@ async function refresh(text) {
   addHitPaths();
   if (selection && !targetExists(selection)) selection = null;
   apply();
-  [wrap.scrollLeft, wrap.scrollTop] = scrollPos;
   const notice = $('notice');
   notice.hidden = diagram.supported;
   notice.textContent = diagram.supported ? '' :
@@ -1956,25 +1955,74 @@ function updateBlockCount() {
 }
 
 /* ---------- sizing & zoom ---------- */
+/*
+ * The view: `zoom` scales the drawing (the SVG is drawn at that size, so it stays crisp)
+ * and `view` is where the drawing's top-left corner sits in the viewport, in pixels.
+ * A diagram point d appears at view + (d - viewBox origin) * zoom.
+ */
+const view = { x: 0, y: 0 };
+let lastVB = null;
+const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
+function applyView() {
+  sheet.style.transform = `translate(${Math.round(view.x * 10) / 10}px, ${Math.round(view.y * 10) / 10}px)`;
+}
 function sizeSvg() {
   const svg = diagram?.svg;
   if (!svg) return;
   const vb = svg.viewBox.baseVal;
+  // When the viewBox grows or shifts (shapes moved past an edge), move the view the
+  // other way so the drawing stays put on screen.
+  if (lastVB && (vb.x !== lastVB.x || vb.y !== lastVB.y)) {
+    view.x += (vb.x - lastVB.x) * zoom;
+    view.y += (vb.y - lastVB.y) * zoom;
+  }
+  lastVB = { x: vb.x, y: vb.y };
   svg.style.maxWidth = 'none';
   svg.setAttribute('width', String(Math.round(vb.width * zoom)));
   svg.setAttribute('height', String(Math.round(vb.height * zoom)));
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
+  applyView();
 }
-const setZoom = (z) => { zoom = Math.max(0.25, Math.min(3, z)); sizeSvg(); drawOverlay(); };
-$('zoom-in').addEventListener('click', () => setZoom(zoom * 1.2));
-$('zoom-out').addEventListener('click', () => setZoom(zoom / 1.2));
+/** Zoom to `z`, keeping the viewport point (ax, ay) fixed (default: the centre). */
+function setZoom(z, ax = wrap.clientWidth / 2, ay = wrap.clientHeight / 2) {
+  const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
+  view.x = ax - (ax - view.x) * (next / zoom);
+  view.y = ay - (ay - view.y) * (next / zoom);
+  zoom = next;
+  sizeSvg();
+  drawOverlay();
+}
+$('zoom-in').addEventListener('click', () => setZoom(zoom * 1.25));
+$('zoom-out').addEventListener('click', () => setZoom(zoom / 1.25));
+/** Scale the drawing to fit the viewport and centre it. */
 function fitToSheet({ max = 1.5 } = {}) {
   if (!diagram) return;
   const vb = diagram.svg.viewBox.baseVal;
-  const pad = parseFloat(getComputedStyle(sheet).paddingLeft) * 2;
-  setZoom(Math.min((wrap.clientWidth - pad) / vb.width, (wrap.clientHeight - pad) / vb.height, max));
+  const narrow = wrap.clientWidth < 600;
+  const top = narrow ? 84 : 48, side = narrow ? 16 : 32;
+  zoom = Math.max(MIN_ZOOM, Math.min((wrap.clientWidth - 2 * side) / vb.width, (wrap.clientHeight - top - side) / vb.height, max));
+  view.x = (wrap.clientWidth - vb.width * zoom) / 2;
+  view.y = top + (wrap.clientHeight - top - side - vb.height * zoom) / 2;
+  lastVB = { x: vb.x, y: vb.y };
+  sizeSvg();
+  drawOverlay();
 }
 $('zoom-fit').addEventListener('click', () => fitToSheet());
+
+/* Wheel: two-finger scroll or the mouse wheel pans; pinch or Ctrl/⌘ + wheel zooms at the cursor. */
+wrap.addEventListener('wheel', (ev) => {
+  if (!diagram) return;
+  ev.preventDefault();
+  const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? wrap.clientHeight : 1;
+  const r = wrap.getBoundingClientRect();
+  if (ev.ctrlKey || ev.metaKey) {
+    setZoom(zoom * Math.exp(-ev.deltaY * unit * 0.01), ev.clientX - r.left, ev.clientY - r.top);
+  } else {
+    view.x -= (ev.shiftKey && !ev.deltaX ? ev.deltaY : ev.deltaX) * unit;
+    view.y -= (ev.shiftKey && !ev.deltaX ? 0 : ev.deltaY) * unit;
+    applyView();
+  }
+}, { passive: false });
 
 /* ---------- edge hit areas ---------- */
 function addHitPaths() {
@@ -2111,7 +2159,7 @@ function renderStrip() {
   }
   if (!selection) {
     const hint = span('hint', '');
-    hint.innerHTML = 'Drag a shape to nudge it from its auto-layout spot; <kbd>Alt</kbd>-drag pins it in place. Drag a corner to resize, a line to bend it (double-click a bend to remove it), a subgraph’s frame to move everything inside, the background to pan. <kbd>←↑→↓</kbd> nudge · <kbd>Del</kbd> resets.';
+    hint.innerHTML = 'Drag a shape to nudge it from its auto-layout spot; <kbd>Alt</kbd>-drag pins it in place. Drag a corner to resize, a line to bend it (double-click a bend to remove it), a subgraph’s frame to move everything inside, the background to pan; pinch or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>-scroll to zoom. <kbd>←↑→↓</kbd> nudge · <kbd>Del</kbd> resets.';
     strip.append(hint);
     return;
   }
@@ -2408,22 +2456,58 @@ function isDoublePress(key) {
 
 /* ---------- panning: press and hold the background (or use the middle button anywhere) ---------- */
 let pan = null;
+const touches = new Map(); // touch pointers on the background, for one-finger pan and pinch
+let pinch = null;
+function startPinch() {
+  const [p1, p2] = [...touches.values()];
+  const r = wrap.getBoundingClientRect();
+  pinch = {
+    dist: Math.hypot(p2.x - p1.x, p2.y - p1.y),
+    mid: { x: (p1.x + p2.x) / 2 - r.left, y: (p1.y + p2.y) / 2 - r.top },
+    zoom, view: { ...view },
+  };
+  pan = null;
+}
 wrap.addEventListener('pointerdown', (ev) => {
-  if (drag || pan || (ev.button !== 0 && ev.button !== 1) || ev.pointerType === 'touch') return;
-  pan = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false };
+  if (drag || (ev.button !== 0 && ev.button !== 1)) return;
+  if (ev.pointerType === 'touch') {
+    touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    wrap.setPointerCapture(ev.pointerId);
+    if (touches.size === 2) { startPinch(); return; }
+    if (touches.size > 2) return;
+  } else if (pan) return;
+  pan = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, moved: false };
   wrap.setPointerCapture(ev.pointerId);
   ev.preventDefault();
 });
 wrap.addEventListener('pointermove', (ev) => {
+  if (touches.has(ev.pointerId)) {
+    touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch && touches.size === 2) {
+      const [p1, p2] = [...touches.values()];
+      const r = wrap.getBoundingClientRect();
+      const mid = { x: (p1.x + p2.x) / 2 - r.left, y: (p1.y + p2.y) / 2 - r.top };
+      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinch.zoom * Math.hypot(p2.x - p1.x, p2.y - p1.y) / pinch.dist));
+      // Keep the point under the fingers' starting midpoint under their current midpoint.
+      view.x = mid.x - (pinch.mid.x - pinch.view.x) * (next / pinch.zoom);
+      view.y = mid.y - (pinch.mid.y - pinch.view.y) * (next / pinch.zoom);
+      zoom = next;
+      sizeSvg();
+      drawOverlay();
+      return;
+    }
+  }
   if (!pan || ev.pointerId !== pan.id) return;
   const dx = ev.clientX - pan.x, dy = ev.clientY - pan.y;
   if (!pan.moved && Math.hypot(dx, dy) < 3) return;
   pan.moved = true;
   wrap.classList.add('panning');
-  wrap.scrollLeft = pan.left - dx;
-  wrap.scrollTop = pan.top - dy;
+  view.x = pan.vx + dx;
+  view.y = pan.vy + dy;
+  applyView();
 });
 function endPan(ev) {
+  if (touches.delete(ev.pointerId) && touches.size < 2) pinch = null;
   if (!pan || ev.pointerId !== pan.id) return;
   if (!pan.moved && ev.type === 'pointerup' && selection) select(null);
   wrap.classList.remove('panning');
