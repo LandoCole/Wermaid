@@ -113,11 +113,12 @@
     <h2 id="h-canvas">2 · Canvas viewer</h2>
     <p><code>pannable</code> makes a fixed-height canvas: drag to pan, pinch or Ctrl/⌘ + scroll to zoom, double-click to fit. <code>controls</code> adds zoom, Fit and Export.</p>
     <div class="row">
-      <label for="pal">Palette
+      <label for="pal">Theme
         <select id="pal">
           <option value="wermaid">Wermaid</option>
           <option value="mermaid">Mermaid</option>
           <option value="pele">Pele</option>
+          <option value="acme">Acme (defined below)</option>
         </select>
       </label>
       <span class="credit" id="credit" hidden></span>
@@ -154,7 +155,7 @@
       %% @edges rounded
       %% @end
     </wermaid-diagram>
-    <pre><code>&lt;wermaid-diagram pannable controls height="380" theme="pele"&gt;…&lt;/wermaid-diagram&gt;</code></pre>
+    <pre><code>&lt;wermaid-diagram pannable controls height="380" name="event architecture"&gt;…&lt;/wermaid-diagram&gt;</code></pre>
   </section>
 
   <section class="plate" aria-labelledby="h-run">
@@ -172,12 +173,54 @@
 %% @end</pre>
     <pre><code>&lt;pre class="mermaid" data-theme="mermaid"&gt;stateDiagram-v2 …&lt;/pre&gt;
 
-import mermaid from 'mermaid';
-import { defineWermaidElement, run } from 'wermaid/element';
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
+import { defineWermaidElement, run } from 'https://cdn.jsdelivr.net/gh/LandoCole/Wermaid@v0.4.0/src/element.js';
 defineWermaidElement(mermaid);
 run();</code></pre>
   </section>
-  <p class="fig" id="status">Fig. 1–3 · rendering…</p>
+
+  <section class="plate" aria-labelledby="h-edit">
+    <h2 id="h-edit">4 · Features</h2>
+    <p><code>features</code> lists what the viewer offers. This one is editable: drag shapes, Alt-drag to pin, resize from the corners, drag a line to bend it, arrow keys to nudge. Undo and Reset come with <code>edit</code>, and <code>themes</code> adds a theme picker. Your adjustments are kept in this browser and come back on reload; Reset forgets them.</p>
+    <wermaid-diagram id="ex-edit" features="copy download edit themes" formats="png svg md" name="support triage">
+      flowchart LR
+        ticket([New ticket]) --> triage{Urgent?}
+        triage -->|yes| page[Page on-call]
+        triage -->|no| queue[Support queue]
+        page --> fix[Fix and reply]
+        queue --> fix
+        fix --> close([Close ticket])
+
+      %% @layout v1
+      %% @title support triage
+      %% @end
+    </wermaid-diagram>
+    <pre><code>&lt;wermaid-diagram features="copy download edit themes" formats="png svg md"&gt;
+  flowchart LR …
+&lt;/wermaid-diagram&gt;
+
+el.addEventListener('wermaid:change', (e) =&gt; save(e.detail.source));</code></pre>
+  </section>
+
+  <section class="plate" aria-labelledby="h-theme">
+    <h2 id="h-theme">5 · Your own theme</h2>
+    <p><code>defineTheme</code> registers a theme from plain data. It works by name in <code>theme</code>, in <code>%% @theme</code> and in the picker above, and its dark variant is derived from the light colours. The editor's Theme button builds one of these on a real diagram and copies the code.</p>
+    <wermaid-diagram id="ex-theme" theme="acme" features="copy download">
+      flowchart TD
+        idea([Idea]) --> draft[Draft]
+        draft --> review{Review}
+        review -->|changes| draft
+        review -->|approved| ship[Ship]
+    </wermaid-diagram>
+    <pre><code>defineTheme('acme', {
+  label: 'Acme',
+  colors: { background: '#fffaf0', text: '#3a2406', line: '#8a5a1c',
+            nodeFill: '#ffe9c2', nodeBorder: '#d98324' },
+  shapes: { radius: 8, borderWidth: 1.5 },
+  edges: { style: 'rounded', radius: 8, width: 1.5 },
+});</code></pre>
+  </section>
+  <p class="fig" id="status">Fig. 1–5 · rendering…</p>
 </main>
 
 <footer class="thanks"><div>
@@ -195,11 +238,19 @@ const MERMAID_URL = new URLSearchParams(location.search).get('mermaid')
   || 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
 const { default: mermaid } = await import(MERMAID_URL);
 
+// A theme of our own: plain data, registered before anything renders.
+defineTheme('acme', {
+  label: 'Acme',
+  colors: { background: '#fffaf0', text: '#3a2406', line: '#8a5a1c', nodeFill: '#ffe9c2', nodeBorder: '#d98324' },
+  shapes: { radius: 8, borderWidth: 1.5 },
+  edges: { style: 'rounded', radius: 8, width: 1.5 },
+});
+
 defineWermaidElement(mermaid);
 const results = await run();
 const els = [...document.querySelectorAll('wermaid-diagram')];
 await Promise.allSettled(els.map((e) => e.rendered));
-document.getElementById('status').textContent = `Fig. 1–3 · ${els.filter((e) => e.diagram).length} diagrams rendered by Wermaid`;
+document.getElementById('status').textContent = `Fig. 1–5 · ${els.filter((e) => e.diagram).length} diagrams rendered by Wermaid`;
 
 // Credit a palette's source while it's in use (THEMES[name].credit).
 function showCredit(name) {

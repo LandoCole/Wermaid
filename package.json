@@ -1,13 +1,15 @@
 {
   "name": "wermaid",
   "version": "0.4.0",
-  "description": "Manual layout overrides for vanilla Mermaid: keep the auto layout, nudge what needs it. Includes an embeddable <wermaid-diagram> viewer.",
+  "description": "Manual layout overrides for vanilla Mermaid: keep the auto layout, nudge what needs it. Loads from a CDN (jsDelivr) with no build step: custom themes and an embeddable, editable <wermaid-diagram>.",
   "type": "module",
   "main": "src/wermaid.js",
   "exports": {
     ".": "./src/wermaid.js",
     "./element": "./src/element.js",
-    "./themes": "./src/themes.js"
+    "./themes": "./src/themes.js",
+    "./auto": "./src/auto.js",
+    "./react": "./src/react.js"
   },
   "files": [
     "src/wermaid.js",
