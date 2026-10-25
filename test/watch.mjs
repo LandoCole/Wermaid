@@ -170,5 +170,42 @@ await p.$eval('#later', (m) => { m.innerHTML = '<pre class="mermaid">flowchart L
 await p.waitForTimeout(700);
 ok('stop() ends watching', await p.$eval('#later', (m) => !!m.querySelector('pre') && !m.querySelector('wermaid-diagram')));
 
+// One-line setup: auto.js on a page of its own (it reads its own script tag).
+{
+  const a = await b.newPage({ viewport: { width: 1200, height: 900 } });
+  a.on('pageerror', (e) => console.log('PAGEERR', e.message));
+  await a.goto(BASE + '/test/auto.html');
+  await a.waitForFunction(() => window.READY, null, { timeout: 30000 });
+  await a.waitForFunction(() => document.querySelector('#auto-block')?.diagram, null, { timeout: 15000 }).catch(() => {});
+  const info = () => a.evaluate(() => {
+    const e = document.querySelector('wermaid-diagram');
+    return e && { features: e.features.filter((n) => n !== 'undo' && n !== 'reset').join(' '), formats: e._formats().join(' '), key: e._layoutKey(), nodes: e.diagram?.scene?.nodes.size };
+  });
+  const got = await info();
+  ok('auto.js upgrades blocks with script options', got?.features === 'copy download edit' && got.formats === 'png svg' && got.nodes === 2, got);
+  ok('auto.js data-persist="off" keeps nothing', got?.key === null, got);
+  await a.evaluate(() => { document.querySelector('#log').insertAdjacentHTML('beforeend', '<pre class="mermaid" id="late">flowchart LR\n  N1 --> N2 --> N3</pre>'); });
+  await a.waitForFunction(() => document.querySelectorAll('wermaid-diagram').length === 2 && [...document.querySelectorAll('wermaid-diagram')].every((e) => e.diagram), null, { timeout: 5000 }).catch(() => {});
+  ok('auto.js watches for new blocks', await a.evaluate(() => document.querySelectorAll('wermaid-diagram')[1]?.diagram?.scene?.nodes.size === 3 && !document.querySelector('#late')), await a.evaluate(() => document.querySelectorAll('wermaid-diagram').length));
+
+  // The React helper, with a stub React so no download is needed.
+  const reactRender = (props, options) => a.evaluate(async ([props, options]) => {
+    const { createMermaidBlock } = await import('/src/react.js');
+    const React = { createElement: (type, props, ...c) => ({ type, props: { ...props, children: c } }) };
+    return createMermaidBlock(React, options)(props);
+  }, [props, options]);
+  const src = 'flowchart LR\n  A --> B';
+  const r = await reactRender({ className: 'language-mermaid', children: src, streaming: true });
+  ok('react helper returns wermaid-diagram for mermaid', r.type === 'wermaid-diagram' && r.props.streaming === '' && r.props.children[0] === src, r);
+  const r2 = await reactRender({ className: 'hljs language-mermaid', children: ['flowchart LR\n', '  A --> B'] }, { features: ['copy', 'edit'], formats: ['png', 'svg'], theme: 'wermaid' });
+  ok('react helper passes options, joins array children, omits streaming when off', r2.type === 'wermaid-diagram' && r2.props.features === 'copy edit'
+    && r2.props.formats === 'png svg' && r2.props.theme === 'wermaid' && r2.props.streaming === undefined && r2.props.children[0] === src, r2);
+  const r3 = await reactRender({ className: 'language-js', children: 'x' });
+  ok('react helper leaves other code alone', r3.type === 'code' && r3.props.className === 'language-js', r3);
+  ok('react helper does not match look-alike languages', (await reactRender({ className: 'language-mermaidx', children: 'x' })).type === 'code'
+    && (await reactRender({ children: 'x' })).type === 'code');
+  await a.close();
+}
+
 console.log(R.join('\n'));
 await b.close();

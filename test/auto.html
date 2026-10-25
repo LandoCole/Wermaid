@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;margin:16px;width:700px}</style></head><body>
+<main id="log">
+  <pre id="auto-block" class="mermaid">flowchart LR
+  A1 --> A2</pre>
+</main>
+<script type="module" src="/src/auto.js" data-mermaid="/mermaid-dist/mermaid.esm.min.mjs" data-features="copy download edit" data-formats="png svg" data-theme="wermaid" data-persist="off"></script>
+<script type="module">
+import { ready } from '/src/auto.js';
+window.READY_PROMISE = ready;
+await ready;
+window.READY = true;
+</script></body></html>

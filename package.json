@@ -14,7 +14,9 @@
     "src/themes.js",
     "src/element.js",
     "src/edit.js",
-    "src/persist.js"
+    "src/persist.js",
+    "src/auto.js",
+    "src/react.js"
   ],
   "scripts": {
     "build": "node build.mjs",
