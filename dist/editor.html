@@ -1,4 +1,4 @@
-<title>ex-mermaid</title>
+<title>Wermaid</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,6 +74,8 @@
     background-position: calc(100% - 7px) 55%, calc(100% - 3px) 55%; background-size: 4px 4px; background-repeat: no-repeat;
   }
   select.pick option { background: var(--paper); color: var(--ink); }
+  select.pick.small { font-size: 12px; padding-block: 1px; color: var(--ink); }
+  .strip select.pick { font-size: 12px; padding-block: 1px; }
   .seg { display: inline-flex; outline: 1px solid var(--line-strong); outline-offset: -1px; }
   .seg button {
     border: 0; background: transparent; padding: 6px 12px; cursor: pointer;
@@ -91,7 +93,7 @@
   }
   .plate { position: relative; border: 1px solid var(--line); display: grid; min-height: 0; min-width: 0; }
   .plate-title {
-    position: absolute; top: -0.8em; left: 14px; right: 14px; display: flex; justify-content: space-between; gap: 12px;
+    position: absolute; top: -0.8em; left: 14px; right: 14px; z-index: 3; display: flex; justify-content: space-between; gap: 12px;
     pointer-events: none; line-height: 1.6;
   }
   .plate-title > * { background: var(--paper); padding: 0 8px; pointer-events: auto; }
@@ -127,17 +129,17 @@
   #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel { cursor: grab; }
   #sheet.editable svg g.cluster > rect, #sheet.editable svg .statediagram-cluster rect { cursor: move; }
   #sheet.dragging, #sheet.dragging * { cursor: grabbing !important; }
-  #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel, .exm-hit, .exm-overlay .h { touch-action: none; }
-  .exm-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: crosshair; }
-  .exm-overlay .sel { fill: none; stroke: var(--ink); stroke-width: 1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
-  .exm-overlay .edge-sel { fill: none; stroke: var(--ink); stroke-width: 5px; opacity: 0.12; vector-effect: non-scaling-stroke; pointer-events: none; }
-  .exm-overlay .h { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
-  .exm-overlay .h.corner { cursor: nwse-resize; }
-  .exm-overlay .h.corner.ne, .exm-overlay .h.corner.sw { cursor: nesw-resize; }
-  .exm-overlay .h.via { fill: var(--ink); cursor: move; }
-  .exm-overlay .h.add { cursor: copy; }
-  .exm-overlay .pin { fill: var(--ink); pointer-events: none; }
-  .exm-overlay .pin.hollow { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel, .wm-hit, .wm-overlay .h { touch-action: none; }
+  .wm-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: crosshair; }
+  .wm-overlay .sel { fill: none; stroke: var(--ink); stroke-width: 1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .edge-sel { fill: none; stroke: var(--ink); stroke-width: 5px; opacity: 0.12; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .h { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .wm-overlay .h.corner { cursor: nwse-resize; }
+  .wm-overlay .h.corner.ne, .wm-overlay .h.corner.sw { cursor: nesw-resize; }
+  .wm-overlay .h.via { fill: var(--ink); cursor: move; }
+  .wm-overlay .h.add { cursor: copy; }
+  .wm-overlay .pin { fill: var(--ink); pointer-events: none; }
+  .wm-overlay .pin.hollow { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 
   .notice { position: sticky; left: 0; top: 0; z-index: 2; margin: 0; padding: 22px 16px 0; font-size: 12px; color: var(--warn); }
 
@@ -186,7 +188,7 @@
 <header class="topbar">
   <div class="wordmark">
     <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="0.5" width="6" height="6" fill="none" stroke="currentColor"/><rect x="9.5" y="9.5" width="6" height="6" fill="none" stroke="currentColor"/><path d="M3.5 7v5.5h5" fill="none" stroke="currentColor" stroke-dasharray="1.5 1.5"/></svg>
-    ex-mermaid
+    Wermaid
   </div>
   <nav class="actions" aria-label="Actions">
     <button id="undo" class="text-btn" type="button" title="Ctrl/⌘ Z">Undo</button>
@@ -199,7 +201,7 @@
 
 <section class="titlerow">
   <div>
-    <h1 id="title">ex-mermaid</h1>
+    <h1 id="title">Wermaid</h1>
     <p>Mermaid lays it out. You nudge what needs it.</p>
   </div>
   <div class="controls">
@@ -208,7 +210,7 @@
     </label>
     <div class="seg" role="group" aria-label="Layout shown">
       <button id="mode-stock" type="button" aria-pressed="false" title="Show Mermaid's own layout">Stock</button>
-      <button id="mode-exm" type="button" aria-pressed="true" title="Show the layout with your overrides">With overrides</button>
+      <button id="mode-wermaid" type="button" aria-pressed="true" title="Show the layout with your overrides">With overrides</button>
     </div>
   </div>
 </section>
@@ -224,6 +226,14 @@
     <div class="plate-title">
       <h2>Diagram</h2>
       <div class="tools">
+        <label for="edge-style">Edges
+          <select id="edge-style" class="pick small" title="How edges are drawn">
+            <option value="">Mermaid</option>
+            <option value="rounded">Rounded</option>
+            <option value="orthogonal">Orthogonal</option>
+            <option value="curved">Curved</option>
+          </select>
+        </label>
         <label for="snap"><input id="snap" type="checkbox" checked> Snap 8</label>
         <div class="zoom">
           <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
@@ -245,7 +255,7 @@
 
 <script type="module">
 /*
- * ex-mermaid — manual layout overrides for vanilla Mermaid.
+ * Wermaid — manual layout overrides for vanilla Mermaid.
  *
  * Pipeline:
  *   1. Split the source into the Mermaid body and the `%% @layout … %% @end` block.
@@ -287,8 +297,12 @@ function parseSource(src) {
 }
 
 function emptyOverrides() {
-  return { targets: new Map(), comments: [] };
+  return { targets: new Map(), comments: [], settings: {} };
 }
+
+/** How edges are drawn. `null` (no setting) keeps Mermaid's own curves on untouched edges. */
+const EDGE_STYLES = ['rounded', 'orthogonal', 'curved'];
+const DEFAULT_RADIUS = 6;
 
 const NUM = String.raw`-?\d+(?:\.\d+)?`;
 const PAIR_RE = new RegExp(`^(${NUM})\\s*,\\s*(${NUM})$`);
@@ -303,6 +317,25 @@ function parseBlockLines(blockLines, firstLineNo) {
     if (!text) return;
     if (text.startsWith('#')) {
       overrides.comments.push(text);
+      return;
+    }
+    if (text.startsWith('@')) {
+      // Diagram-wide settings, e.g. `@edges orthogonal` or `@edges rounded 10`.
+      const [name, ...args] = text.slice(1).split(/\s+/);
+      if (name === 'edges') {
+        const [style, radius] = args;
+        if (!EDGE_STYLES.includes(style)) {
+          errors.push({ line: lineNo, message: `@edges expects ${EDGE_STYLES.join(', ')} — got "${style ?? ''}"` });
+          return;
+        }
+        overrides.settings.edges = { style };
+        if (radius !== undefined) {
+          if (!/^\d+(\.\d+)?$/.test(radius)) errors.push({ line: lineNo, message: `@edges radius must be a number — got "${radius}"` });
+          else overrides.settings.edges.radius = +radius;
+        }
+      } else {
+        errors.push({ line: lineNo, message: `unknown setting "@${name}"` });
+      }
       return;
     }
     const m = text.match(/^(\S+)(?:\s+(\S+))?/);
@@ -365,6 +398,11 @@ function applyOp(entry, op, arg, args) {
       if (entry.kind !== 'edge') throw new Error('`label` only applies to edges');
       entry.label = parsePair(arg, 'label');
       break;
+    case 'style':
+      if (entry.kind !== 'edge') throw new Error('`style` only applies to edges');
+      if (!EDGE_STYLES.includes(arg)) throw new Error(`\`style\` expects ${EDGE_STYLES.join(', ')} — got "${arg}"`);
+      entry.style = arg;
+      break;
     default:
       throw new Error(`unknown instruction "${op}"`);
   }
@@ -388,6 +426,7 @@ function entryOps(e) {
   if (e.size) ops.push(`size ${r1(e.size.w)}x${r1(e.size.h)}`);
   if (e.via && e.via.length) ops.push(`via ${e.via.map(fmtPair).join(' ')}`);
   if (e.label && (e.label.x || e.label.y)) ops.push(`label ${fmtPair(e.label)}`);
+  if (e.style) ops.push(`style ${e.style}`);
   return ops.join(' ; ');
 }
 
@@ -397,7 +436,8 @@ function entryOps(e) {
  */
 function serializeBlock(overrides, scene) {
   const entries = [...overrides.targets.values()].filter((e) => entryOps(e));
-  if (!entries.length && !overrides.comments.length) return '';
+  const edgesSetting = overrides.settings?.edges;
+  if (!entries.length && !overrides.comments.length && !edgesSetting) return '';
   const order = new Map();
   if (scene) {
     let i = 0;
@@ -410,6 +450,7 @@ function serializeBlock(overrides, scene) {
   const label = (e) => (e.kind === 'edge' ? edgeSelector(e, scene) : e.selector);
   const width = Math.max(4, ...entries.map((e) => label(e).length));
   const out = ['%% @layout v1'];
+  if (edgesSetting) out.push(`%% @edges ${edgesSetting.style}${edgesSetting.radius !== undefined ? ` ${r1(edgesSetting.radius)}` : ''}`);
   for (const c of overrides.comments) out.push(`%% ${c}`);
   for (const e of entries) out.push(`%% ${label(e).padEnd(width)}  ${entryOps(e)}`);
   out.push('%% @end');
@@ -563,6 +604,32 @@ function autoRoute(a, b, off = 0) {
   const my = (s.y + t.y) / 2;
   if (eq(s.x, t.x)) return [s, { x: s.x, y: my }, t];
   return [s, { x: s.x, y: my }, { x: t.x, y: my }, t];
+}
+
+/** Right-angled route through waypoints, leaving and entering the shapes square to a side. */
+function elbowRoute(a, b, via) {
+  const sideToward = (box, p) => {
+    const dx = p.x - box.cx, dy = p.y - box.cy;
+    return Math.abs(dx) / (box.w / 2) >= Math.abs(dy) / (box.h / 2) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't');
+  };
+  const horiz = (side) => side === 'l' || side === 'r';
+  const sa = sideToward(a, via[0]), sb = sideToward(b, via[via.length - 1]);
+  const pts = [sidePort(a, sa, 0)];
+  let heading = horiz(sa) ? 'h' : 'v';
+  const targets = [...via, sidePort(b, sb, 0)];
+  targets.forEach((q, i) => {
+    const p = pts[pts.length - 1];
+    if (!eq(p.x, q.x) && !eq(p.y, q.y)) {
+      // The last leg has to arrive along the target side's axis.
+      const goH = i === targets.length - 1 ? !horiz(sb) : heading === 'h';
+      pts.push(goH ? { x: q.x, y: p.y } : { x: p.x, y: q.y });
+      heading = goH ? 'v' : 'h';
+    } else {
+      heading = eq(p.x, q.x) ? 'v' : 'h';
+    }
+    pts.push(q);
+  });
+  return simplify(pts);
 }
 
 function viaRoute(a, b, via) {
@@ -1091,6 +1158,8 @@ function readScene(svg, svgId, data, direction) {
       pull,
       labelEl: labelBox ? labelEl : null,
       labelBox,
+      // Empty labels still draw a tiny background chip; it's hidden once the edge moves away.
+      emptyLabelEl: !labelBox && labelEl ? labelEl : null,
     });
   }
   const titleEl = svg.querySelector('.flowchartTitleText, .statediagramTitleText, .classDiagramTitleText');
@@ -1221,8 +1290,11 @@ function applyOverrides(scene, overrides, mut) {
   const obstacles = [...geom.nodes.values()].map((g) => g.box);
   const movedBoxes = [...geom.nodes.entries()].filter(([, g]) => g.changed);
   const plans = [];
+  const edgeSetting = overrides.settings?.edges || null;
   for (const e of scene.edges.values()) {
     const ov = edgeOv.get(e.id);
+    // The look this edge is drawn in: its own `style`, else `@edges`, else Mermaid's (null).
+    const look = ov?.style || edgeSetting?.style || null;
     const a = geom.nodes.get(e.start) || geom.clusters.get(e.start);
     const b = geom.nodes.get(e.end) || geom.clusters.get(e.end);
     if (!a || !b) continue;
@@ -1242,7 +1314,9 @@ function applyOverrides(scene, overrides, mut) {
     } else if (!selfLoop) {
       mode = 'route';
     }
-    plans.push({ e, ov, a, b, mode, shift, points, hasVia });
+    // Orthogonal looks can't reuse Mermaid's curve, so every such edge gets routed.
+    if ((look === 'orthogonal' || look === 'rounded') && !selfLoop) mode = 'route';
+    plans.push({ e, ov, a, b, mode, shift, points, hasVia, look });
   }
 
   // Pass 2 — route, then nudge overlapping segments apart.
@@ -1250,8 +1324,9 @@ function applyOverrides(scene, overrides, mut) {
   for (const pl of plans) {
     if (pl.mode !== 'route') continue;
     if (pl.hasVia) {
-      pl.points = viaRoute(pl.a.box, pl.b.box, pl.ov.via);
-      pl.style = 'curve';
+      const square = pl.look === 'orthogonal' || pl.look === 'rounded';
+      pl.points = square ? elbowRoute(pl.a.box, pl.b.box, pl.ov.via) : viaRoute(pl.a.box, pl.b.box, pl.ov.via);
+      pl.style = square ? 'orthogonal' : 'curve';
       continue;
     }
     const others = obstacles.filter((o) => o !== pl.a.box && o !== pl.b.box);
@@ -1270,7 +1345,7 @@ function applyOverrides(scene, overrides, mut) {
       routed.push(pl);
     } else {
       pl.points = autoRoute(pl.a.box, pl.b.box, laneOffset(pl.e));
-      pl.style = 'curve';
+      pl.style = pl.look === 'orthogonal' || pl.look === 'rounded' ? 'orthogonal' : 'curve';
     }
   }
   distributePorts(routed.flatMap((pl) => {
@@ -1283,7 +1358,8 @@ function applyOverrides(scene, overrides, mut) {
   nudgeRoutes(routed.map((pl) => pl.points));
 
   // Pass 3 — draw paths.
-  for (const { e, mode, shift, points, style } of plans) {
+  const radius = edgeSetting?.radius ?? DEFAULT_RADIUS;
+  for (const { e, mode, shift, points, style, look } of plans) {
     if (mode === 'shift') {
       mut.set(e.pathEl, 'transform', prependTranslate(e.pathEl.getAttribute('transform'), shift.x, shift.y));
     } else if (mode === 'route') {
@@ -1292,9 +1368,13 @@ function applyOverrides(scene, overrides, mut) {
       drawn[drawn.length - 1] = pullBack(drawn.at(-1), drawn.at(-2), e.pull.end);
       const inv = e.local.inverse();
       const local = (p) => { const q = new DOMPoint(p.x, p.y).matrixTransform(inv); return { x: q.x, y: q.y }; };
-      const d = style === 'orthogonal' ? roundedPath(drawn.map(local)) : curve(drawn.map(local));
+      const pts = drawn.map(local);
+      // Orthogonal routes: square corners, rounded corners (the default), or smoothed into a curve.
+      const d = style !== 'orthogonal' || look === 'curved' ? curve(pts)
+        : roundedPath(pts, look === 'orthogonal' ? 0 : radius);
       mut.set(e.pathEl, 'd', d);
       mut.set(e.pathEl, 'data-points', btoa(JSON.stringify(points.map(local))));
+      if (e.emptyLabelEl) mut.set(e.emptyLabelEl, 'visibility', 'hidden');
     }
   }
 
@@ -1303,7 +1383,7 @@ function applyOverrides(scene, overrides, mut) {
   const placed = [...geom.nodes.values()].map((g) => g.box);
   const overlaps = (r) => placed.some((q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
   const ordered = [...plans.filter((p) => p.mode !== 'route'), ...plans.filter((p) => p.mode === 'route')];
-  for (const { e, ov, mode, shift, points, style } of ordered) {
+  for (const { e, ov, mode, shift, points, style, look } of ordered) {
     const labelOff = ov?.label || { x: 0, y: 0 };
     let labelAuto = null;
     if (e.labelEl && e.labelBox) {
@@ -1334,7 +1414,7 @@ function applyOverrides(scene, overrides, mut) {
     if (labelBox) placed.push(labelBox);
     if (mode !== 'stock') geom.changed = true;
     geom.edges.set(e.id, {
-      mode, style: style || 'stock', points, via: ov?.via || [], labelAuto, labelBox, labelOffset: labelOff,
+      mode, style: style || 'stock', look, points, via: ov?.via || [], labelAuto, labelBox, labelOffset: labelOff,
     });
   }
 
@@ -1363,16 +1443,16 @@ function applyOverrides(scene, overrides, mut) {
 let counter = 0;
 
 /**
- * Create an ex-mermaid renderer bound to a Mermaid instance (v11+).
+ * Create a Wermaid renderer bound to a Mermaid instance (v11+).
  *
- *   const exm = createExMermaid(mermaid);
- *   const diagram = await exm.render(container, source);
+ *   const wermaid = createWermaid(mermaid);
+ *   const diagram = await wermaid.render(container, source);
  *   diagram.setOverrides(overrides);   // re-apply without re-running Mermaid
  */
-function createExMermaid(mermaid) {
+function createWermaid(mermaid) {
   async function render(container, source, { id } = {}) {
     const parsed = parseSource(source);
-    const svgId = id || `exm-${++counter}`;
+    const svgId = id || `wm-${++counter}`;
     const { svg: svgText, bindFunctions } = await mermaid.render(svgId, parsed.body);
     container.innerHTML = svgText;
     const svg = container.querySelector('svg');
@@ -1429,7 +1509,7 @@ function createExMermaid(mermaid) {
     return diagram;
   }
 
-  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, VERSION };
+  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, VERSION };
 }
 
 
@@ -1469,9 +1549,9 @@ const EXAMPLES = [
 const $ = (id) => document.getElementById(id);
 const srcEl = $('src'), sheet = $('sheet'), wrap = $('sheet-wrap'), strip = $('strip');
 const SVGNS = 'http://www.w3.org/2000/svg';
-const DRAFT_KEY = 'exm:draft:v1';
+const DRAFT_KEY = 'wermaid:draft:v1';
 
-const exm = createExMermaid(mermaid);
+const wermaid = createWermaid(mermaid);
 let diagram = null;          // current render
 let renderedBody = null;     // Mermaid body the current render came from
 let overrides = emptyOverrides();
@@ -1596,7 +1676,7 @@ async function refresh(text) {
   sheet.append(staging);
   let next;
   try {
-    next = await exm.render(staging, text, { id: `exm-d${seq}` });
+    next = await wermaid.render(staging, text, { id: `wm-d${seq}` });
   } catch (err) {
     staging.remove();
     if (seq !== renderSeq) return;
@@ -1645,6 +1725,7 @@ function apply() {
     // Hold the frame still while dragging; it refits when the drag ends.
     diagram.svg.setAttribute('viewBox', dragViewBox);
   }
+  $('edge-style').value = overrides.settings?.edges?.style || '';
   sizeSvg();
   syncHitPaths();
   drawOverlay();
@@ -1720,7 +1801,8 @@ function showWarnings() {
   for (const w of diagram?.warnings || []) add('warn', `<span>${esc(w)}</span>`);
 }
 function updateBlockCount() {
-  const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label).length;
+  const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label || e.style).length
+    + (overrides.settings?.edges ? 1 : 0);
   $('block-count').textContent = n ? `${n} override${n === 1 ? '' : 's'}` : 'no layout block';
   updateCaption(n);
 }
@@ -1751,8 +1833,8 @@ function addHitPaths() {
   if (!diagram?.scene) return;
   for (const e of diagram.scene.edges.values()) {
     const hit = document.createElementNS(SVGNS, 'path');
-    hit.setAttribute('class', 'exm-hit');
-    hit.dataset.exmEdge = e.id;
+    hit.setAttribute('class', 'wm-hit');
+    hit.dataset.wmEdge = e.id;
     e.pathEl.after(hit);
     e.hitEl = hit;
   }
@@ -1787,10 +1869,10 @@ const snap = (v) => (snapOn() ? Math.round(v / 8) * 8 : Math.round(v * 10) / 10)
 
 /* ---------- overlay ---------- */
 function overlayGroup() {
-  let g = diagram.svg.querySelector(':scope > g.exm-overlay');
+  let g = diagram.svg.querySelector(':scope > g.wm-overlay');
   if (!g) {
     g = document.createElementNS(SVGNS, 'g');
-    g.setAttribute('class', 'exm-overlay');
+    g.setAttribute('class', 'wm-overlay');
     diagram.svg.append(g);
   }
   return g;
@@ -1937,8 +2019,24 @@ function renderStrip() {
     const via = ov?.via?.length || 0;
     strip.append(span('', via ? `${via} bend${via === 1 ? '' : 's'}` : 'auto route'));
     if (ov?.label) strip.append(span('', `label moved ${Math.round(ov.label.x)}, ${Math.round(ov.label.y)}`));
+    const wrapEl = document.createElement('label');
+    wrapEl.className = 'field';
+    wrapEl.htmlFor = 'f-edge-style';
+    wrapEl.append('style');
+    const sel = document.createElement('select');
+    sel.id = 'f-edge-style'; sel.className = 'pick';
+    for (const [v, t] of [['', 'Diagram default'], ['rounded', 'Rounded'], ['orthogonal', 'Orthogonal'], ['curved', 'Curved']]) sel.add(new Option(t, v));
+    sel.value = ov?.style || '';
+    const edgeId = selection.id;
+    sel.addEventListener('change', () => {
+      const e = entryFor('edge', edgeId);
+      if (sel.value) e.style = sel.value; else delete e.style;
+      commit();
+    });
+    wrapEl.append(sel);
+    strip.append(wrapEl);
   }
-  if (ov && (ov.at || ov.nudge || ov.size || ov.via?.length || ov.label)) {
+  if (ov && (ov.at || ov.nudge || ov.size || ov.via?.length || ov.label || ov.style)) {
     const b = document.createElement('button');
     b.className = 'btn'; b.type = 'button'; b.textContent = 'Reset this';
     b.addEventListener('click', () => { clearEntry(selection.kind, selection.id); commit(); });
@@ -1987,8 +2085,8 @@ let drag = null;
 function hitTarget(target) {
   const handle = target.closest('[data-handle]');
   if (handle) return { type: 'handle', handle: handle.dataset.handle };
-  const hit = target.closest('.exm-hit');
-  if (hit) return { type: 'edge', id: hit.dataset.exmEdge };
+  const hit = target.closest('.wm-hit');
+  if (hit) return { type: 'edge', id: hit.dataset.wmEdge };
   const s = diagram.scene;
   const label = target.closest('g.edgeLabel');
   if (label) for (const e of s.edges.values()) if (e.labelEl === label) return { type: 'label', id: e.id };
@@ -2210,17 +2308,27 @@ document.addEventListener('keydown', (ev) => {
 function setMode(stock) {
   showStock = stock;
   $('mode-stock').setAttribute('aria-pressed', String(stock));
-  $('mode-exm').setAttribute('aria-pressed', String(!stock));
+  $('mode-wermaid').setAttribute('aria-pressed', String(!stock));
   sheet.classList.toggle('editable', !!diagram?.supported && !stock);
   apply();
   updateBlockCount();
 }
 $('mode-stock').addEventListener('click', () => setMode(true));
-$('mode-exm').addEventListener('click', () => setMode(false));
+$('mode-wermaid').addEventListener('click', () => setMode(false));
+
+$('edge-style').addEventListener('change', (ev) => {
+  if (!diagram) return;
+  overrides.settings = overrides.settings || {};
+  const style = ev.target.value;
+  if (style) overrides.settings.edges = { ...overrides.settings.edges, style };
+  else delete overrides.settings.edges;
+  commit();
+});
 
 $('reset-all').addEventListener('click', () => {
-  if (!diagram || !overrides.targets.size) { toast('There are no overrides to clear'); return; }
+  if (!diagram || (!overrides.targets.size && !overrides.settings?.edges)) { toast('There are no overrides to clear'); return; }
   overrides.targets.clear();
+  overrides.settings = {};
   commit();
   toast('Overrides cleared. Undo brings them back.');
 });
@@ -2247,7 +2355,7 @@ $('copy-src').addEventListener('click', () => copyText(srcEl.value, 'Source copi
 $('copy-svg').addEventListener('click', () => {
   if (!diagram) return;
   const clone = diagram.svg.cloneNode(true);
-  clone.querySelectorAll('.exm-overlay, .exm-hit').forEach((n) => n.remove());
+  clone.querySelectorAll('.wm-overlay, .wm-hit').forEach((n) => n.remove());
   clone.removeAttribute('width'); clone.removeAttribute('height');
   copyText(clone.outerHTML, 'SVG copied');
 });

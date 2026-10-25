@@ -1,4 +1,4 @@
-<title>ex-mermaid</title>
+<title>Wermaid</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,6 +74,8 @@
     background-position: calc(100% - 7px) 55%, calc(100% - 3px) 55%; background-size: 4px 4px; background-repeat: no-repeat;
   }
   select.pick option { background: var(--paper); color: var(--ink); }
+  select.pick.small { font-size: 12px; padding-block: 1px; color: var(--ink); }
+  .strip select.pick { font-size: 12px; padding-block: 1px; }
   .seg { display: inline-flex; outline: 1px solid var(--line-strong); outline-offset: -1px; }
   .seg button {
     border: 0; background: transparent; padding: 6px 12px; cursor: pointer;
@@ -91,7 +93,7 @@
   }
   .plate { position: relative; border: 1px solid var(--line); display: grid; min-height: 0; min-width: 0; }
   .plate-title {
-    position: absolute; top: -0.8em; left: 14px; right: 14px; display: flex; justify-content: space-between; gap: 12px;
+    position: absolute; top: -0.8em; left: 14px; right: 14px; z-index: 3; display: flex; justify-content: space-between; gap: 12px;
     pointer-events: none; line-height: 1.6;
   }
   .plate-title > * { background: var(--paper); padding: 0 8px; pointer-events: auto; }
@@ -127,17 +129,17 @@
   #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel { cursor: grab; }
   #sheet.editable svg g.cluster > rect, #sheet.editable svg .statediagram-cluster rect { cursor: move; }
   #sheet.dragging, #sheet.dragging * { cursor: grabbing !important; }
-  #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel, .exm-hit, .exm-overlay .h { touch-action: none; }
-  .exm-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: crosshair; }
-  .exm-overlay .sel { fill: none; stroke: var(--ink); stroke-width: 1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
-  .exm-overlay .edge-sel { fill: none; stroke: var(--ink); stroke-width: 5px; opacity: 0.12; vector-effect: non-scaling-stroke; pointer-events: none; }
-  .exm-overlay .h { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
-  .exm-overlay .h.corner { cursor: nwse-resize; }
-  .exm-overlay .h.corner.ne, .exm-overlay .h.corner.sw { cursor: nesw-resize; }
-  .exm-overlay .h.via { fill: var(--ink); cursor: move; }
-  .exm-overlay .h.add { cursor: copy; }
-  .exm-overlay .pin { fill: var(--ink); pointer-events: none; }
-  .exm-overlay .pin.hollow { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel, .wm-hit, .wm-overlay .h { touch-action: none; }
+  .wm-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: crosshair; }
+  .wm-overlay .sel { fill: none; stroke: var(--ink); stroke-width: 1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .edge-sel { fill: none; stroke: var(--ink); stroke-width: 5px; opacity: 0.12; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .h { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .wm-overlay .h.corner { cursor: nwse-resize; }
+  .wm-overlay .h.corner.ne, .wm-overlay .h.corner.sw { cursor: nesw-resize; }
+  .wm-overlay .h.via { fill: var(--ink); cursor: move; }
+  .wm-overlay .h.add { cursor: copy; }
+  .wm-overlay .pin { fill: var(--ink); pointer-events: none; }
+  .wm-overlay .pin.hollow { fill: var(--paper); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 
   .notice { position: sticky; left: 0; top: 0; z-index: 2; margin: 0; padding: 22px 16px 0; font-size: 12px; color: var(--warn); }
 
@@ -186,7 +188,7 @@
 <header class="topbar">
   <div class="wordmark">
     <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="0.5" width="6" height="6" fill="none" stroke="currentColor"/><rect x="9.5" y="9.5" width="6" height="6" fill="none" stroke="currentColor"/><path d="M3.5 7v5.5h5" fill="none" stroke="currentColor" stroke-dasharray="1.5 1.5"/></svg>
-    ex-mermaid
+    Wermaid
   </div>
   <nav class="actions" aria-label="Actions">
     <button id="undo" class="text-btn" type="button" title="Ctrl/⌘ Z">Undo</button>
@@ -199,7 +201,7 @@
 
 <section class="titlerow">
   <div>
-    <h1 id="title">ex-mermaid</h1>
+    <h1 id="title">Wermaid</h1>
     <p>Mermaid lays it out. You nudge what needs it.</p>
   </div>
   <div class="controls">
@@ -208,7 +210,7 @@
     </label>
     <div class="seg" role="group" aria-label="Layout shown">
       <button id="mode-stock" type="button" aria-pressed="false" title="Show Mermaid's own layout">Stock</button>
-      <button id="mode-exm" type="button" aria-pressed="true" title="Show the layout with your overrides">With overrides</button>
+      <button id="mode-wermaid" type="button" aria-pressed="true" title="Show the layout with your overrides">With overrides</button>
     </div>
   </div>
 </section>
@@ -224,6 +226,14 @@
     <div class="plate-title">
       <h2>Diagram</h2>
       <div class="tools">
+        <label for="edge-style">Edges
+          <select id="edge-style" class="pick small" title="How edges are drawn">
+            <option value="">Mermaid</option>
+            <option value="rounded">Rounded</option>
+            <option value="orthogonal">Orthogonal</option>
+            <option value="curved">Curved</option>
+          </select>
+        </label>
         <label for="snap"><input id="snap" type="checkbox" checked> Snap 8</label>
         <div class="zoom">
           <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
@@ -244,7 +254,7 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-/*__EXM_LIBRARY__*/
+/*__WERMAID_LIBRARY__*/
 
 /* ================================================================== */
 /* Editor                                                              */
@@ -254,14 +264,14 @@ const MERMAID_URL = new URLSearchParams(location.search).get('mermaid')
   || 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
 const { default: mermaid } = await import(MERMAID_URL);
 
-const EXAMPLES = /*__EXM_EXAMPLES__*/;
+const EXAMPLES = /*__WERMAID_EXAMPLES__*/;
 
 const $ = (id) => document.getElementById(id);
 const srcEl = $('src'), sheet = $('sheet'), wrap = $('sheet-wrap'), strip = $('strip');
 const SVGNS = 'http://www.w3.org/2000/svg';
-const DRAFT_KEY = 'exm:draft:v1';
+const DRAFT_KEY = 'wermaid:draft:v1';
 
-const exm = createExMermaid(mermaid);
+const wermaid = createWermaid(mermaid);
 let diagram = null;          // current render
 let renderedBody = null;     // Mermaid body the current render came from
 let overrides = emptyOverrides();
@@ -386,7 +396,7 @@ async function refresh(text) {
   sheet.append(staging);
   let next;
   try {
-    next = await exm.render(staging, text, { id: `exm-d${seq}` });
+    next = await wermaid.render(staging, text, { id: `wm-d${seq}` });
   } catch (err) {
     staging.remove();
     if (seq !== renderSeq) return;
@@ -435,6 +445,7 @@ function apply() {
     // Hold the frame still while dragging; it refits when the drag ends.
     diagram.svg.setAttribute('viewBox', dragViewBox);
   }
+  $('edge-style').value = overrides.settings?.edges?.style || '';
   sizeSvg();
   syncHitPaths();
   drawOverlay();
@@ -510,7 +521,8 @@ function showWarnings() {
   for (const w of diagram?.warnings || []) add('warn', `<span>${esc(w)}</span>`);
 }
 function updateBlockCount() {
-  const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label).length;
+  const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label || e.style).length
+    + (overrides.settings?.edges ? 1 : 0);
   $('block-count').textContent = n ? `${n} override${n === 1 ? '' : 's'}` : 'no layout block';
   updateCaption(n);
 }
@@ -541,8 +553,8 @@ function addHitPaths() {
   if (!diagram?.scene) return;
   for (const e of diagram.scene.edges.values()) {
     const hit = document.createElementNS(SVGNS, 'path');
-    hit.setAttribute('class', 'exm-hit');
-    hit.dataset.exmEdge = e.id;
+    hit.setAttribute('class', 'wm-hit');
+    hit.dataset.wmEdge = e.id;
     e.pathEl.after(hit);
     e.hitEl = hit;
   }
@@ -577,10 +589,10 @@ const snap = (v) => (snapOn() ? Math.round(v / 8) * 8 : Math.round(v * 10) / 10)
 
 /* ---------- overlay ---------- */
 function overlayGroup() {
-  let g = diagram.svg.querySelector(':scope > g.exm-overlay');
+  let g = diagram.svg.querySelector(':scope > g.wm-overlay');
   if (!g) {
     g = document.createElementNS(SVGNS, 'g');
-    g.setAttribute('class', 'exm-overlay');
+    g.setAttribute('class', 'wm-overlay');
     diagram.svg.append(g);
   }
   return g;
@@ -727,8 +739,24 @@ function renderStrip() {
     const via = ov?.via?.length || 0;
     strip.append(span('', via ? `${via} bend${via === 1 ? '' : 's'}` : 'auto route'));
     if (ov?.label) strip.append(span('', `label moved ${Math.round(ov.label.x)}, ${Math.round(ov.label.y)}`));
+    const wrapEl = document.createElement('label');
+    wrapEl.className = 'field';
+    wrapEl.htmlFor = 'f-edge-style';
+    wrapEl.append('style');
+    const sel = document.createElement('select');
+    sel.id = 'f-edge-style'; sel.className = 'pick';
+    for (const [v, t] of [['', 'Diagram default'], ['rounded', 'Rounded'], ['orthogonal', 'Orthogonal'], ['curved', 'Curved']]) sel.add(new Option(t, v));
+    sel.value = ov?.style || '';
+    const edgeId = selection.id;
+    sel.addEventListener('change', () => {
+      const e = entryFor('edge', edgeId);
+      if (sel.value) e.style = sel.value; else delete e.style;
+      commit();
+    });
+    wrapEl.append(sel);
+    strip.append(wrapEl);
   }
-  if (ov && (ov.at || ov.nudge || ov.size || ov.via?.length || ov.label)) {
+  if (ov && (ov.at || ov.nudge || ov.size || ov.via?.length || ov.label || ov.style)) {
     const b = document.createElement('button');
     b.className = 'btn'; b.type = 'button'; b.textContent = 'Reset this';
     b.addEventListener('click', () => { clearEntry(selection.kind, selection.id); commit(); });
@@ -777,8 +805,8 @@ let drag = null;
 function hitTarget(target) {
   const handle = target.closest('[data-handle]');
   if (handle) return { type: 'handle', handle: handle.dataset.handle };
-  const hit = target.closest('.exm-hit');
-  if (hit) return { type: 'edge', id: hit.dataset.exmEdge };
+  const hit = target.closest('.wm-hit');
+  if (hit) return { type: 'edge', id: hit.dataset.wmEdge };
   const s = diagram.scene;
   const label = target.closest('g.edgeLabel');
   if (label) for (const e of s.edges.values()) if (e.labelEl === label) return { type: 'label', id: e.id };
@@ -1000,17 +1028,27 @@ document.addEventListener('keydown', (ev) => {
 function setMode(stock) {
   showStock = stock;
   $('mode-stock').setAttribute('aria-pressed', String(stock));
-  $('mode-exm').setAttribute('aria-pressed', String(!stock));
+  $('mode-wermaid').setAttribute('aria-pressed', String(!stock));
   sheet.classList.toggle('editable', !!diagram?.supported && !stock);
   apply();
   updateBlockCount();
 }
 $('mode-stock').addEventListener('click', () => setMode(true));
-$('mode-exm').addEventListener('click', () => setMode(false));
+$('mode-wermaid').addEventListener('click', () => setMode(false));
+
+$('edge-style').addEventListener('change', (ev) => {
+  if (!diagram) return;
+  overrides.settings = overrides.settings || {};
+  const style = ev.target.value;
+  if (style) overrides.settings.edges = { ...overrides.settings.edges, style };
+  else delete overrides.settings.edges;
+  commit();
+});
 
 $('reset-all').addEventListener('click', () => {
-  if (!diagram || !overrides.targets.size) { toast('There are no overrides to clear'); return; }
+  if (!diagram || (!overrides.targets.size && !overrides.settings?.edges)) { toast('There are no overrides to clear'); return; }
   overrides.targets.clear();
+  overrides.settings = {};
   commit();
   toast('Overrides cleared. Undo brings them back.');
 });
@@ -1037,7 +1075,7 @@ $('copy-src').addEventListener('click', () => copyText(srcEl.value, 'Source copi
 $('copy-svg').addEventListener('click', () => {
   if (!diagram) return;
   const clone = diagram.svg.cloneNode(true);
-  clone.querySelectorAll('.exm-overlay, .exm-hit').forEach((n) => n.remove());
+  clone.querySelectorAll('.wm-overlay, .wm-hit').forEach((n) => n.remove());
   clone.removeAttribute('width'); clone.removeAttribute('height');
   copyText(clone.outerHTML, 'SVG copied');
 });

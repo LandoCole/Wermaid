@@ -2,9 +2,9 @@
 <div id="a"></div><div id="b"></div><div id="c"></div><div id="d"></div><div id="e"></div><div id="f"></div>
 <script type="module">
 import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
-import { createExMermaid } from '/src/ex-mermaid.js';
+import { createWermaid } from '/src/wermaid.js';
 mermaid.initialize({ startOnLoad: false });
-const exm = createExMermaid(mermaid);
+const wermaid = createWermaid(mermaid);
 const BASE = `flowchart LR
   A[Start] --> B{Check}
   B -->|yes| C(Do it)
@@ -16,8 +16,8 @@ const BASE = `flowchart LR
     X --> Y
   end
   D --> E`;
-await exm.render(a, BASE, {id:'v1'});
-await exm.render(b, BASE + `\n%% @layout\n%% B nudge 0,140\n%% C nudge 0,-120\n%% G2 nudge 520,330\n%% A size 160x80\n%% edge e9 via 330,520 ; label 0,0\n%% @end`, {id:'v2'});
+await wermaid.render(a, BASE, {id:'v1'});
+await wermaid.render(b, BASE + `\n%% @layout\n%% B nudge 0,140\n%% C nudge 0,-120\n%% G2 nudge 520,330\n%% A size 160x80\n%% edge e9 via 330,520 ; label 0,0\n%% @end`, {id:'v2'});
 const ST = `stateDiagram-v2
   [*] --> Idle
   Idle --> Running : start
@@ -27,15 +27,15 @@ const ST = `stateDiagram-v2
     Warm --> Hot
   }
   Running --> [*]`;
-const s0 = await exm.render(c, ST, {id:'v3'});
+const s0 = await wermaid.render(c, ST, {id:'v3'});
 const w = s0.scene.nodes.get('Idle').box;
-await exm.render(d, ST + `\n%% @layout\n%% Idle nudge 120,0\n%% Running nudge 0,40\n%% @end`, {id:'v4'});
+await wermaid.render(d, ST + `\n%% @layout\n%% Idle nudge 120,0\n%% Running nudge 0,40\n%% @end`, {id:'v4'});
 const CL = `classDiagram
   class Order { +id: UUID\n +total() Money }
   class Customer
   Customer "1" --> "*" Order : places
   Order *-- LineItem`;
-await exm.render(e, CL, {id:'v5'});
-await exm.render(f, CL + `\n%% @layout\n%% LineItem nudge 220,-40\n%% @end`, {id:'v6'});
+await wermaid.render(e, CL, {id:'v5'});
+await wermaid.render(f, CL + `\n%% @layout\n%% LineItem nudge 220,-40\n%% @end`, {id:'v6'});
 window.RESULTS=[{name:'rendered',pass:true}];
 </script></body></html>

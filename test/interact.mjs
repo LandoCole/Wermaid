@@ -17,7 +17,7 @@ let s = await src();
 ok('node drag writes pay nudge', /%% pay\s+nudge -?\d+,-?\d+/.test(s), s.split('%% @layout')[1]);
 ok('selection strip shows node', (await p.textContent('#strip')).includes('pay'));
 // 2. resize via corner handle
-const h = await center('.exm-overlay [data-handle="corner:se"]');
+const h = await center('.wm-overlay [data-handle="corner:se"]');
 await drag(h, { x: h.x + 40, y: h.y + 20 });
 s = await src();
 ok('resize writes size', /%% pay\s+nudge [-\d.,]+ ; size [\d.]+x[\d.]+/.test(s), s.split('%% @layout')[1]);
@@ -38,13 +38,13 @@ await drag({ x: fb.x + fb.width - 8, y: fb.y + fb.height - 8 }, { x: fb.x + fb.w
 s = await src();
 ok('cluster drag writes nudge', /%% fulfil\s+nudge 0,\d+/.test(s), s.split('%% @layout')[1]);
 // 4. bend an edge: press on the hit path midpoint of ship->notify
-const hit = await p.$('path.exm-hit[data-exm-edge="L_ship_notify_0"]');
+const hit = await p.$('path.wm-hit[data-wm-edge="L_ship_notify_0"]');
 const pt = await hit.evaluate((el) => { const svg = el.ownerSVGElement; const q = el.getPointAtLength(el.getTotalLength()/2).matrixTransform(el.getScreenCTM()); return { x: q.x, y: q.y }; });
 await drag(pt, { x: pt.x + 30, y: pt.y - 80 });
 s = await src();
 ok('edge bend writes via', /%% ship->notify\s+via \d+,\d+/.test(s), s.split('%% @layout')[1]);
 // 5. double-click the bend removes it
-const via = await center('.exm-overlay [data-handle="via:0"]');
+const via = await center('.wm-overlay [data-handle="via:0"]');
 await p.mouse.dblclick(via.x, via.y); await p.waitForTimeout(150);
 s = await src();
 ok('dblclick removes bend', !/ship->notify/.test(s), s.split('%% @layout')[1]);
@@ -62,7 +62,7 @@ ok('undo removes label offset', !/label 0,-/.test(s), s.split('%% @layout')[1]);
 // 8. stock toggle
 await p.click('#mode-stock'); await p.waitForTimeout(150);
 const stockT = await p.$eval('[id*="-flowchart-pay-"]', (g) => g.getAttribute('transform'));
-await p.click('#mode-exm'); await p.waitForTimeout(150);
+await p.click('#mode-wermaid'); await p.waitForTimeout(150);
 const exT = await p.$eval('[id*="-flowchart-pay-"]', (g) => g.getAttribute('transform'));
 ok('stock toggle shows stock layout', !stockT.startsWith('translate(') || stockT.split(')').length < exT.split(')').length, [stockT, exT]);
 // 9. type in the source: body edit keeps overrides
@@ -84,6 +84,12 @@ await p.$eval('#src', (t) => { t.value = t.value.replace('flowchart LR', 'flowch
 await p.waitForTimeout(700);
 ok('parse error message', (await p.textContent('#messages')).includes("can't parse"));
 ok('last render kept', (await p.$$eval('#sheet svg', (x) => x.length)) === 1);
+// 11b. global edge style
+await p.selectOption('#edge-style', 'orthogonal'); await p.waitForTimeout(200);
+s = await src();
+ok('edge style picker writes @edges', /%% @edges orthogonal/.test(s), s.split('%% @layout')[1]);
+await p.selectOption('#edge-style', ''); await p.waitForTimeout(200);
+ok('edge style picker clears @edges', !/@edges/.test(await src()));
 // 12. switch examples
 for (const v of ['1', '2', '3', '4']) {
   await p.selectOption('#example', v); await p.waitForTimeout(900);

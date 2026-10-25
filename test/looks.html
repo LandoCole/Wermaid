@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;background:#fff} div{border:1px solid #ddd;margin:8px}</style></head><body>
+<div id="a"></div><div id="b"></div><div id="c"></div>
+<script type="module">
+import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
+import { createWermaid } from '/src/wermaid.js';
+import { EXAMPLES } from '/src/examples.mjs';
+mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+const wermaid = createWermaid(mermaid);
+const src = EXAMPLES[1].source;
+await wermaid.render(a, src, {id:'l1'});
+await wermaid.render(b, src + `\n%% @layout\n%% @edges rounded\n%% @end`, {id:'l2'});
+await wermaid.render(c, src + `\n%% @layout\n%% @edges orthogonal\n%% @end`, {id:'l3'});
+window.RESULTS=[{name:'ok',pass:true}];
+</script></body></html>

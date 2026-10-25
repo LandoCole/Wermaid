@@ -1,7 +1,7 @@
-# ex-mermaid
+# Wermaid
 
 Manual layout overrides for vanilla Mermaid. Mermaid still parses and lays out the diagram;
-ex-mermaid applies the adjustments saved in a `%% @layout` block and re-routes only what moved.
+Wermaid applies the adjustments saved in a `%% @layout` block and re-routes only what moved.
 
 The block is made of Mermaid comments, so GitHub, Notion and every other Mermaid renderer
 ignore it and draw the stock layout.
@@ -15,12 +15,13 @@ flowchart LR
   B e1@-->|no| D
 
 %% @layout v1
+%% @edges rounded               (draw every edge square-routed with rounded corners)
 %% B        nudge 0,40            (offset from where Mermaid puts it)
 %% C        at 320,200            (pin the center, diagram units)
 %% D        size 160x60
 %% G1       nudge 80,0            (subgraph: moves everything inside it)
 %% A->B     via 260,140 260,200   (edge bends; A->B#2 for the second A→B edge)
-%% edge e1  label 0,-12           (edge by Mermaid edge id)
+%% edge e1  label 0,-12 ; style orthogonal   (edge by Mermaid edge id)
 %% @end
 ```
 
@@ -31,6 +32,23 @@ flowchart LR
 | `size WxH` | node | Draw the shape at this size |
 | `via x,y …` | edge | Route the edge through these points |
 | `label dx,dy` | edge | Offset the label from its automatic spot |
+| `style rounded \| orthogonal \| curved` | edge | Draw this edge in a different look |
+
+### Edge looks
+
+`%% @edges <look> [radius]` sets how edges are drawn for the whole diagram; `style` on one edge
+overrides it.
+
+| Look | Edges |
+|---|---|
+| (no setting) | Untouched edges keep Mermaid's curves; edges Wermaid re-routes are square with rounded corners |
+| `rounded` | Every edge routed around shapes on right angles, corners rounded (radius 6, or the number given) |
+| `orthogonal` | Same routes with sharp corners |
+| `curved` | Untouched edges keep Mermaid's curves; re-routed edges are smoothed into curves too |
+
+`rounded` and `orthogonal` re-route every edge, so an untouched diagram no longer matches the
+stock render exactly. Edges with bends (`via`) follow right angles through the bends in these
+two looks.
 
 Overrides only move the shapes they name; every other shape stays where Mermaid put it.
 A subgraph's offset also applies to everything inside it. Overrides naming ids that no longer
@@ -45,6 +63,7 @@ exist produce warnings and are ignored.
 - Drag a corner to resize, a line to add a bend (double-click a bend to remove it), an edge label
   to offset it, a subgraph's frame to move everything inside.
 - Arrow keys nudge, Delete resets the selection, Ctrl/⌘ Z undoes.
+- "Edges" in the diagram header sets the look for every edge; a selected edge has its own style picker.
 - "Stock" shows Mermaid's own layout for comparison.
 
 Diagrams render with Mermaid's `base` theme driven by the page's color tokens: thin outlines,
@@ -55,10 +74,10 @@ first and falls back to EB Garamond.
 
 ```js
 import mermaid from 'mermaid';               // v11+
-import { createExMermaid } from 'ex-mermaid';
+import { createWermaid } from 'wermaid';
 
-const exm = createExMermaid(mermaid);
-const diagram = await exm.render(container, source);   // stock render + overrides
+const wermaid = createWermaid(mermaid);
+const diagram = await wermaid.render(container, source);   // stock render + overrides
 diagram.geometry;                 // final node/subgraph boxes and edge points
 diagram.setOverrides(next);       // re-apply without re-running Mermaid
 diagram.showStock();              // Mermaid's own layout
@@ -84,13 +103,13 @@ Other types (sequence, gantt, …) render as stock Mermaid.
 ```
 npm install
 npm run link-mermaid      # serves node_modules/mermaid/dist at /mermaid-dist for tests
-npm run build             # inlines src/ex-mermaid.js + src/examples.mjs into dist/editor.html
+npm run build             # inlines src/wermaid.js + src/examples.mjs into dist/editor.html
 npm run serve &           # http://127.0.0.1:8765/dist/local.html?mermaid=/mermaid-dist/mermaid.esm.min.mjs
 npx playwright install chromium
 npm test
 ```
 
-- `src/ex-mermaid.js` – the library (no dependencies besides the Mermaid instance you pass in)
+- `src/wermaid.js` – the library (no dependencies besides the Mermaid instance you pass in)
 - `src/editor.html` – editor template; `src/examples.mjs` – the bundled examples
 - `test/m1.html` – library suite: stock-identical render, local effect, subgraph refit, stale ids,
   round trip, obstacle avoidance
@@ -98,7 +117,7 @@ npm test
 
 ## Known limits
 
-- Edges with manual bends (`via`) are drawn as curves through the bends and don't avoid shapes.
+- Edges with manual bends (`via`) go straight through the bends you set and don't avoid shapes.
 - Subgraph frames aren't obstacles: routes may cross a subgraph they don't belong to.
 - Class diagram cardinality labels ("1", "*") stay where Mermaid put them when an edge moves.
 - Overrides are applied after Mermaid's layout, so the rest of the diagram doesn't make room for

@@ -1,5 +1,5 @@
 /*
- * ex-mermaid — manual layout overrides for vanilla Mermaid.
+ * Wermaid — manual layout overrides for vanilla Mermaid.
  *
  * Pipeline:
  *   1. Split the source into the Mermaid body and the `%% @layout … %% @end` block.
@@ -41,8 +41,12 @@ export function parseSource(src) {
 }
 
 export function emptyOverrides() {
-  return { targets: new Map(), comments: [] };
+  return { targets: new Map(), comments: [], settings: {} };
 }
+
+/** How edges are drawn. `null` (no setting) keeps Mermaid's own curves on untouched edges. */
+export const EDGE_STYLES = ['rounded', 'orthogonal', 'curved'];
+const DEFAULT_RADIUS = 6;
 
 const NUM = String.raw`-?\d+(?:\.\d+)?`;
 const PAIR_RE = new RegExp(`^(${NUM})\\s*,\\s*(${NUM})$`);
@@ -57,6 +61,25 @@ function parseBlockLines(blockLines, firstLineNo) {
     if (!text) return;
     if (text.startsWith('#')) {
       overrides.comments.push(text);
+      return;
+    }
+    if (text.startsWith('@')) {
+      // Diagram-wide settings, e.g. `@edges orthogonal` or `@edges rounded 10`.
+      const [name, ...args] = text.slice(1).split(/\s+/);
+      if (name === 'edges') {
+        const [style, radius] = args;
+        if (!EDGE_STYLES.includes(style)) {
+          errors.push({ line: lineNo, message: `@edges expects ${EDGE_STYLES.join(', ')} — got "${style ?? ''}"` });
+          return;
+        }
+        overrides.settings.edges = { style };
+        if (radius !== undefined) {
+          if (!/^\d+(\.\d+)?$/.test(radius)) errors.push({ line: lineNo, message: `@edges radius must be a number — got "${radius}"` });
+          else overrides.settings.edges.radius = +radius;
+        }
+      } else {
+        errors.push({ line: lineNo, message: `unknown setting "@${name}"` });
+      }
       return;
     }
     const m = text.match(/^(\S+)(?:\s+(\S+))?/);
@@ -119,6 +142,11 @@ function applyOp(entry, op, arg, args) {
       if (entry.kind !== 'edge') throw new Error('`label` only applies to edges');
       entry.label = parsePair(arg, 'label');
       break;
+    case 'style':
+      if (entry.kind !== 'edge') throw new Error('`style` only applies to edges');
+      if (!EDGE_STYLES.includes(arg)) throw new Error(`\`style\` expects ${EDGE_STYLES.join(', ')} — got "${arg}"`);
+      entry.style = arg;
+      break;
     default:
       throw new Error(`unknown instruction "${op}"`);
   }
@@ -142,6 +170,7 @@ function entryOps(e) {
   if (e.size) ops.push(`size ${r1(e.size.w)}x${r1(e.size.h)}`);
   if (e.via && e.via.length) ops.push(`via ${e.via.map(fmtPair).join(' ')}`);
   if (e.label && (e.label.x || e.label.y)) ops.push(`label ${fmtPair(e.label)}`);
+  if (e.style) ops.push(`style ${e.style}`);
   return ops.join(' ; ');
 }
 
@@ -151,7 +180,8 @@ function entryOps(e) {
  */
 export function serializeBlock(overrides, scene) {
   const entries = [...overrides.targets.values()].filter((e) => entryOps(e));
-  if (!entries.length && !overrides.comments.length) return '';
+  const edgesSetting = overrides.settings?.edges;
+  if (!entries.length && !overrides.comments.length && !edgesSetting) return '';
   const order = new Map();
   if (scene) {
     let i = 0;
@@ -164,6 +194,7 @@ export function serializeBlock(overrides, scene) {
   const label = (e) => (e.kind === 'edge' ? edgeSelector(e, scene) : e.selector);
   const width = Math.max(4, ...entries.map((e) => label(e).length));
   const out = ['%% @layout v1'];
+  if (edgesSetting) out.push(`%% @edges ${edgesSetting.style}${edgesSetting.radius !== undefined ? ` ${r1(edgesSetting.radius)}` : ''}`);
   for (const c of overrides.comments) out.push(`%% ${c}`);
   for (const e of entries) out.push(`%% ${label(e).padEnd(width)}  ${entryOps(e)}`);
   out.push('%% @end');
@@ -317,6 +348,32 @@ function autoRoute(a, b, off = 0) {
   const my = (s.y + t.y) / 2;
   if (eq(s.x, t.x)) return [s, { x: s.x, y: my }, t];
   return [s, { x: s.x, y: my }, { x: t.x, y: my }, t];
+}
+
+/** Right-angled route through waypoints, leaving and entering the shapes square to a side. */
+function elbowRoute(a, b, via) {
+  const sideToward = (box, p) => {
+    const dx = p.x - box.cx, dy = p.y - box.cy;
+    return Math.abs(dx) / (box.w / 2) >= Math.abs(dy) / (box.h / 2) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't');
+  };
+  const horiz = (side) => side === 'l' || side === 'r';
+  const sa = sideToward(a, via[0]), sb = sideToward(b, via[via.length - 1]);
+  const pts = [sidePort(a, sa, 0)];
+  let heading = horiz(sa) ? 'h' : 'v';
+  const targets = [...via, sidePort(b, sb, 0)];
+  targets.forEach((q, i) => {
+    const p = pts[pts.length - 1];
+    if (!eq(p.x, q.x) && !eq(p.y, q.y)) {
+      // The last leg has to arrive along the target side's axis.
+      const goH = i === targets.length - 1 ? !horiz(sb) : heading === 'h';
+      pts.push(goH ? { x: q.x, y: p.y } : { x: p.x, y: q.y });
+      heading = goH ? 'v' : 'h';
+    } else {
+      heading = eq(p.x, q.x) ? 'v' : 'h';
+    }
+    pts.push(q);
+  });
+  return simplify(pts);
 }
 
 function viaRoute(a, b, via) {
@@ -845,6 +902,8 @@ function readScene(svg, svgId, data, direction) {
       pull,
       labelEl: labelBox ? labelEl : null,
       labelBox,
+      // Empty labels still draw a tiny background chip; it's hidden once the edge moves away.
+      emptyLabelEl: !labelBox && labelEl ? labelEl : null,
     });
   }
   const titleEl = svg.querySelector('.flowchartTitleText, .statediagramTitleText, .classDiagramTitleText');
@@ -975,8 +1034,11 @@ function applyOverrides(scene, overrides, mut) {
   const obstacles = [...geom.nodes.values()].map((g) => g.box);
   const movedBoxes = [...geom.nodes.entries()].filter(([, g]) => g.changed);
   const plans = [];
+  const edgeSetting = overrides.settings?.edges || null;
   for (const e of scene.edges.values()) {
     const ov = edgeOv.get(e.id);
+    // The look this edge is drawn in: its own `style`, else `@edges`, else Mermaid's (null).
+    const look = ov?.style || edgeSetting?.style || null;
     const a = geom.nodes.get(e.start) || geom.clusters.get(e.start);
     const b = geom.nodes.get(e.end) || geom.clusters.get(e.end);
     if (!a || !b) continue;
@@ -996,7 +1058,9 @@ function applyOverrides(scene, overrides, mut) {
     } else if (!selfLoop) {
       mode = 'route';
     }
-    plans.push({ e, ov, a, b, mode, shift, points, hasVia });
+    // Orthogonal looks can't reuse Mermaid's curve, so every such edge gets routed.
+    if ((look === 'orthogonal' || look === 'rounded') && !selfLoop) mode = 'route';
+    plans.push({ e, ov, a, b, mode, shift, points, hasVia, look });
   }
 
   // Pass 2 — route, then nudge overlapping segments apart.
@@ -1004,8 +1068,9 @@ function applyOverrides(scene, overrides, mut) {
   for (const pl of plans) {
     if (pl.mode !== 'route') continue;
     if (pl.hasVia) {
-      pl.points = viaRoute(pl.a.box, pl.b.box, pl.ov.via);
-      pl.style = 'curve';
+      const square = pl.look === 'orthogonal' || pl.look === 'rounded';
+      pl.points = square ? elbowRoute(pl.a.box, pl.b.box, pl.ov.via) : viaRoute(pl.a.box, pl.b.box, pl.ov.via);
+      pl.style = square ? 'orthogonal' : 'curve';
       continue;
     }
     const others = obstacles.filter((o) => o !== pl.a.box && o !== pl.b.box);
@@ -1024,7 +1089,7 @@ function applyOverrides(scene, overrides, mut) {
       routed.push(pl);
     } else {
       pl.points = autoRoute(pl.a.box, pl.b.box, laneOffset(pl.e));
-      pl.style = 'curve';
+      pl.style = pl.look === 'orthogonal' || pl.look === 'rounded' ? 'orthogonal' : 'curve';
     }
   }
   distributePorts(routed.flatMap((pl) => {
@@ -1037,7 +1102,8 @@ function applyOverrides(scene, overrides, mut) {
   nudgeRoutes(routed.map((pl) => pl.points));
 
   // Pass 3 — draw paths.
-  for (const { e, mode, shift, points, style } of plans) {
+  const radius = edgeSetting?.radius ?? DEFAULT_RADIUS;
+  for (const { e, mode, shift, points, style, look } of plans) {
     if (mode === 'shift') {
       mut.set(e.pathEl, 'transform', prependTranslate(e.pathEl.getAttribute('transform'), shift.x, shift.y));
     } else if (mode === 'route') {
@@ -1046,9 +1112,13 @@ function applyOverrides(scene, overrides, mut) {
       drawn[drawn.length - 1] = pullBack(drawn.at(-1), drawn.at(-2), e.pull.end);
       const inv = e.local.inverse();
       const local = (p) => { const q = new DOMPoint(p.x, p.y).matrixTransform(inv); return { x: q.x, y: q.y }; };
-      const d = style === 'orthogonal' ? roundedPath(drawn.map(local)) : curve(drawn.map(local));
+      const pts = drawn.map(local);
+      // Orthogonal routes: square corners, rounded corners (the default), or smoothed into a curve.
+      const d = style !== 'orthogonal' || look === 'curved' ? curve(pts)
+        : roundedPath(pts, look === 'orthogonal' ? 0 : radius);
       mut.set(e.pathEl, 'd', d);
       mut.set(e.pathEl, 'data-points', btoa(JSON.stringify(points.map(local))));
+      if (e.emptyLabelEl) mut.set(e.emptyLabelEl, 'visibility', 'hidden');
     }
   }
 
@@ -1057,7 +1127,7 @@ function applyOverrides(scene, overrides, mut) {
   const placed = [...geom.nodes.values()].map((g) => g.box);
   const overlaps = (r) => placed.some((q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
   const ordered = [...plans.filter((p) => p.mode !== 'route'), ...plans.filter((p) => p.mode === 'route')];
-  for (const { e, ov, mode, shift, points, style } of ordered) {
+  for (const { e, ov, mode, shift, points, style, look } of ordered) {
     const labelOff = ov?.label || { x: 0, y: 0 };
     let labelAuto = null;
     if (e.labelEl && e.labelBox) {
@@ -1088,7 +1158,7 @@ function applyOverrides(scene, overrides, mut) {
     if (labelBox) placed.push(labelBox);
     if (mode !== 'stock') geom.changed = true;
     geom.edges.set(e.id, {
-      mode, style: style || 'stock', points, via: ov?.via || [], labelAuto, labelBox, labelOffset: labelOff,
+      mode, style: style || 'stock', look, points, via: ov?.via || [], labelAuto, labelBox, labelOffset: labelOff,
     });
   }
 
@@ -1117,16 +1187,16 @@ function applyOverrides(scene, overrides, mut) {
 let counter = 0;
 
 /**
- * Create an ex-mermaid renderer bound to a Mermaid instance (v11+).
+ * Create a Wermaid renderer bound to a Mermaid instance (v11+).
  *
- *   const exm = createExMermaid(mermaid);
- *   const diagram = await exm.render(container, source);
+ *   const wermaid = createWermaid(mermaid);
+ *   const diagram = await wermaid.render(container, source);
  *   diagram.setOverrides(overrides);   // re-apply without re-running Mermaid
  */
-export function createExMermaid(mermaid) {
+export function createWermaid(mermaid) {
   async function render(container, source, { id } = {}) {
     const parsed = parseSource(source);
-    const svgId = id || `exm-${++counter}`;
+    const svgId = id || `wm-${++counter}`;
     const { svg: svgText, bindFunctions } = await mermaid.render(svgId, parsed.body);
     container.innerHTML = svgText;
     const svg = container.querySelector('svg');
@@ -1183,7 +1253,7 @@ export function createExMermaid(mermaid) {
     return diagram;
   }
 
-  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, VERSION };
+  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, VERSION };
 }
 
-export default createExMermaid;
+export default createWermaid;

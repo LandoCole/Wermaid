@@ -1,10 +1,10 @@
 <!doctype html><html><body><div id="out"></div><script type="module">
 import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
-import { createExMermaid } from '/src/ex-mermaid.js';
+import { createWermaid } from '/src/wermaid.js';
 import { EXAMPLES } from '/src/examples.mjs';
 mermaid.initialize({startOnLoad:false});
-const exm = createExMermaid(mermaid);
-const d = await exm.render(out, EXAMPLES[1].source, {id:'p'});
+const wermaid = createWermaid(mermaid);
+const d = await wermaid.render(out, EXAMPLES[1].source, {id:'p'});
 const ov = d.overrides;
 const t0 = performance.now(); let n = 0;
 for (let k = 0; k < 30; k++) {
