@@ -225,6 +225,28 @@ ok('compare shows the stock layout', await p.$eval('#ed', (e) => e.diagram.geome
 await p.click('#ed >> [data-act="compare"]');
 ok('compare off shows the edited layout again', await p.$eval('#ed', (e) => e.diagram.geometry.nodes.get('X').delta.y) > 0);
 ok('the editing controls have accessible names', await p.$eval('#ed', (e) => [...e.shadowRoot.querySelectorAll('.toolbar button, .toolbar select')].every((n) => n.getAttribute('aria-label') || n.textContent.trim())));
+// WCAG 2.5.3: a button's accessible name contains the words it shows.
+const nameMismatches = await p.$eval('#ed', (e) => [...e.shadowRoot.querySelectorAll('.toolbar button')]
+  .filter((n) => /[a-z]/i.test(n.textContent))
+  .filter((n) => !(n.getAttribute('aria-label') ?? n.textContent).toLowerCase().includes(n.textContent.trim().toLowerCase()))
+  .map((n) => n.textContent.trim()));
+ok('accessible names contain the visible text', nameMismatches.length === 0, nameMismatches);
+// Keys pressed on a toolbar control are the control's: arrows and Delete don't move the selection.
+const nudgeFromToolbar = async (key) => {
+  await clickNode('#ed2', 'B');
+  await p.locator('#ed2 >> [data-act="reset"]').focus();
+  await p.keyboard.press(key);
+  await settle();
+  return editedSource('#ed2');
+};
+ok('arrow keys on a toolbar button leave the diagram alone', !/nudge/.test(await nudgeFromToolbar('ArrowRight')), await editedSource('#ed2'));
+await p.keyboard.press('Escape');
+await clickNode('#ed2', 'B'); await p.keyboard.press('ArrowDown'); await settle();
+const nudged = await editedSource('#ed2');
+ok('Delete on a toolbar button leaves the diagram alone', /%% B\s+nudge 0,1/.test(nudged) && await nudgeFromToolbar('Delete') === nudged, await editedSource('#ed2'));
+await p.locator('#ed2 >> [data-act="reset"]').focus();
+await p.keyboard.press(`${MOD}+z`); await settle();
+ok('Ctrl/⌘ Z still undoes from the toolbar', !/nudge/.test(await editedSource('#ed2')) && last().reason === 'undo', await editedSource('#ed2'));
 
 // Keeping adjustments in the browser.
 const ready = async () => {
@@ -238,7 +260,8 @@ const reset = async (sel) => {
 // The stored entry for a diagram, parsed, or null: looked up the way the element names it.
 const storedFor = (sel) => p.$eval(sel, async (e) => {
   const m = await import('/src/persist.js');
-  const raw = localStorage.getItem('wermaid:layout:' + (e.getAttribute('persist-key') || m.sourceKey(e._supplied)));
+  const named = e.getAttribute('persist-key');
+  const raw = localStorage.getItem('wermaid:layout:' + (named ? `${named}:${m.sourceKey(e._supplied)}` : m.sourceKey(e._supplied)));
   return raw === null ? null : JSON.parse(raw);
 });
 const layoutCount = () => p.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('wermaid:layout:') && k !== 'wermaid:layout:index').length);
@@ -336,12 +359,64 @@ ok('a broken store only switches persistence off for its own diagram', await (as
   return (await storedFor('#twin-a'))?.block?.includes('nudge') === true;
 })());
 
+// persist-key names a diagram together with its source: a different source under the same key starts fresh.
+await forgetLayouts();
+await mount('pk-a', 'flowchart LR\n  A --> B', { 'persist-key': 'msg-1' });
+await dragNode('#pk-a', 'A', 0, 40);
+await unmount('pk-a');
+await mount('pk-b', 'flowchart LR\n  X --> Y', { 'persist-key': 'msg-1' });
+ok('persist-key with a different source restores nothing', await editedSource('#pk-b') === 'flowchart LR\n  X --> Y'
+  && await p.$eval('#pk-b', (e) => e.diagram.warnings.length === 0), [await editedSource('#pk-b'), await p.$eval('#pk-b', (e) => e.diagram.warnings)]);
+await unmount('pk-b');
+await mount('pk-c', 'flowchart LR\n  A --> B', { 'persist-key': 'msg-1' });
+ok('persist-key with the same source still restores', /%% A\s+nudge 0,\d+/.test(await editedSource('#pk-c')), await editedSource('#pk-c'));
+await unmount('pk-c');
+// A stored layout is restored even where marking it as recently used fails (storage full, say).
+await mount('bump-a', 'flowchart LR\n  P --> Q');
+await dragNode('#bump-a', 'P', 0, 40);
+await unmount('bump-a');
+await p.evaluate(() => {
+  window.__setItem = Storage.prototype.setItem;
+  Storage.prototype.setItem = () => { throw new DOMException('full', 'QuotaExceededError'); };
+});
+await mount('bump-b', 'flowchart LR\n  P --> Q');
+await p.evaluate(() => { Storage.prototype.setItem = window.__setItem; });
+ok('a stored layout is restored when storage refuses writes', /%% P\s+nudge 0,\d+/.test(await editedSource('#bump-b')), await editedSource('#bump-b'));
+await unmount('bump-b');
+
+// Themes defined after a diagram rendered.
+const fillOf = (sel) => p.$eval(sel, (e) => getComputedStyle(e.diagram.svg.querySelector('g.node .label-container')).fill);
+const defineLate = (name, spec) => p.evaluate(async ([name, spec]) => { (await import('/src/element.js')).defineTheme(name, spec); }, [name, spec]);
+await mount('late', 'flowchart LR\n  A --> B', { theme: 'acme', features: 'themes' });
+ok('an undefined theme attribute warns at first', await p.$eval('#late', (e) => e.diagram.theme === 'wermaid' && e.diagram.warnings.some((w) => w.includes('"acme"'))));
+await defineLate('acme', { colors: { nodeFill: '#ffeedd' } });
+await rendered('#late');
+ok('a theme defined after render is picked up', await p.$eval('#late', (e) => e.diagram.theme) === 'acme' && await fillOf('#late') === 'rgb(255, 238, 221)'
+  && await p.$eval('#late', (e) => !e.diagram.warnings.some((w) => w.includes("isn't defined"))), [await p.$eval('#late', (e) => [e.diagram.theme, e.diagram.warnings]), await fillOf('#late')]);
+const pickerOptions = (sel) => p.$eval(sel, (e) => [...e.shadowRoot.querySelector('[data-act="theme"]').options].map((o) => o.value));
+ok('the theme picker gains a theme defined after render', (await pickerOptions('#late')).includes('acme') && (await pickerOptions('#ed')).includes('acme'), await pickerOptions('#ed'));
+await defineLate('acme', { colors: { nodeFill: '#ddeeff' } });
+await rendered('#late');
+ok('redefining a theme in use re-renders', await fillOf('#late') === 'rgb(221, 238, 255)', await fillOf('#late'));
+const rendersOf = (sel) => p.$eval(sel, (e) => e.__renders ?? 0);
+await p.$eval('#ed', (e) => { e.__renders = 0; e.addEventListener('wermaid:render', () => { e.__renders++; }); });
+await defineLate('unused', { colors: { nodeFill: '#000000' } });
+await p.waitForTimeout(300);
+ok('defining a theme a diagram doesn\'t use leaves it alone', await rendersOf('#ed') === 0 && (await pickerOptions('#ed')).includes('unused'), await rendersOf('#ed'));
+await unmount('late');
+
 // Touch devices always show the toolbar.
 const touch = await b.newContext({ viewport: { width: 400, height: 800 }, hasTouch: true, isMobile: true });
 const tp = await touch.newPage();
 await tp.goto(BASE + '/test/features.html');
 await tp.waitForFunction(() => window.READY, null, { timeout: 30000 });
 ok('toolbar is always shown without hover', await tp.$eval('#fmt', (e) => getComputedStyle(e.shadowRoot.querySelector('.toolbar')).opacity) === '1');
+// …so it gets its own row, clear of the drawing.
+const clearOfToolbar = (sel) => tp.$eval(sel, (e) => {
+  const bar = e.shadowRoot.querySelector('.toolbar').getBoundingClientRect(), svg = e.diagram.svg.getBoundingClientRect();
+  return bar.bottom <= svg.top + 0.5 || { bar: bar.bottom, svg: svg.top };
+});
+ok('the always-shown toolbar does not cover the diagram', await clearOfToolbar('#fmt') === true && await clearOfToolbar('#plain') === true, [await clearOfToolbar('#fmt'), await clearOfToolbar('#plain')]);
 
 console.log(R.join('\n'));
 await b.close();

@@ -94,7 +94,9 @@ defineTheme('acme', {
 ```
 
 The spec is plain data, so it can live in a JSON file:
-`defineTheme('acme', await (await fetch('/acme-theme.json')).json())`.
+`defineTheme('acme', await (await fetch('/acme-theme.json')).json())`. Diagrams already on the
+page catch up when it arrives: those that use `acme` (or a redefined theme) draw again with it, and
+theme pickers list it.
 
 | Field | Meaning |
 |---|---|
@@ -129,14 +131,15 @@ From strongest to weakest:
 
 1. The diagram's own `%% @theme`. A user's pick in a theme picker is written here, so it travels
    with the saved source.
-2. The element's `theme` attribute (`theme="none"` leaves Mermaid's config alone for diagrams that
-   name no theme).
+2. The element's `theme` attribute.
 3. The page default: `defineWermaidElement(mermaid, { defaults: { theme: 'acme' } })`.
 4. `wermaid`.
 
-A name that isn't registered is skipped for the next level, with a warning. With the library,
-`render(…, { theme })` forces a theme over all of these, and `defaultTheme` (a name or a list)
-takes the place of levels 2 to 4.
+A name that isn't registered is skipped for the next level, with a warning. `theme="none"` on the
+element beats all of these: no palette, Mermaid's own config, as in 0.3. The block's `%% @theme`
+stays in the source (and in what the element writes back); it just isn't applied. With the library,
+`render(…, { theme })` forces a theme over all of these (`theme: 'none'` forces none), and
+`defaultTheme` (a name or a list) takes the place of levels 2 to 4.
 
 The **theme builder** in the editor designs these specs against a real diagram (see Editor).
 
@@ -239,7 +242,7 @@ Mermaid), the `source` property, or `src`. Changing any of them re-renders.
 
 | Attribute | Values | |
 |---|---|---|
-| `theme` | `mermaid`, `wermaid`, `pele`, a theme you defined, `none` | The starting theme for diagrams that name none in their block (see "Which theme a diagram uses"). Default: the page default, else `wermaid`. `none` leaves the page's Mermaid config alone. |
+| `theme` | `mermaid`, `wermaid`, `pele`, a theme you defined, `none` | The starting theme for diagrams that name none in their block (see "Which theme a diagram uses"). Default: the page default, else `wermaid`. `none` leaves the page's Mermaid config alone, even for a diagram whose block names a theme, and hides the theme picker. |
 | `dark` | `auto`, `true`, `false` | `auto` (default) follows `prefers-color-scheme` and re-renders when it changes. |
 | `features` | space-separated names, or `none` | What the viewer offers (below). Default `copy download`. |
 | `formats` | `png`, `svg`, `md` | What Download offers (below). Default `png`. |
@@ -252,7 +255,7 @@ Mermaid), the `source` property, or `src`. Changing any of them re-renders.
 | `name` | text | File name for exports. Default: the block's `@title`, else `my-wermaid`. |
 | `streaming` | present | The source is still arriving: draw nothing, show no error. Removing it renders at once. See "Chat and streaming". |
 | `persist` | `off` | Keep no adjustments in the browser (below). |
-| `persist-key` | text | Names the diagram for the stored adjustments (below). |
+| `persist-key` | text | Tells identical diagrams apart for the stored adjustments (below). |
 
 Notes:
 
@@ -325,9 +328,10 @@ While `edit` is on, adjustments are kept in the user's browser (`localStorage`) 
 the same diagram renders again: after a reload, or when a chat app re-renders an old answer. What's
 kept is the diagram's layout block, which includes the user's theme and edge-look picks.
 
-- "The same diagram" is, by default, a hash of the source as the app supplied it. Set
-  `persist-key="message-123:diagram-1"` to tell identical diagrams apart. Changing the key later
-  doesn't migrate adjustments stored under the old one.
+- "The same diagram" is a hash of the source as the app supplied it. Set
+  `persist-key="message-123:diagram-1"` to tell identical diagrams apart: the key is stored with
+  the hash, so a different source under the same key starts fresh. Changing the key later doesn't
+  migrate adjustments stored under the old one.
 - Reset clears the stored entry. `persist="off"` on the element, or
   `defaults: { persist: false }`, keeps nothing.
 - Stored adjustments are per browser and device, never synced. The 200 most recently used diagrams

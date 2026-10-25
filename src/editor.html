@@ -1245,7 +1245,7 @@ function cleanSpec(spec) {
   return Object.fromEntries([...SPEC_ORDER.filter((k) => k in out), ...Object.keys(out).filter((k) => !SPEC_ORDER.includes(k))].map((k) => [k, out[k]]));
 }
 /** What a spec resolves to (inherited and derived values filled in), without registering it. */
-function resolveTheme(spec) {
+function resolvedSpec(spec) {
   try { defineTheme(SCRATCH_THEME, spec); return THEMES[SCRATCH_THEME].spec; } catch { return null; } finally { delete THEMES[SCRATCH_THEME]; }
 }
 function uniqueName(base) {
@@ -1332,7 +1332,7 @@ function fillThemePanel() {
 /** Placeholders, swatches, the Start from list and the spacing note, from the resolved spec. */
 function showThemeDerived() {
   const spec = cleanSpec(builder.spec);
-  const resolved = resolveTheme(spec);
+  const resolved = resolvedSpec(spec);
   $('theme-label').placeholder = builder.name;
   // Start from: Wermaid, Pele and custom themes that don't already build on this one.
   const ext = $('theme-extends');
@@ -1469,6 +1469,8 @@ function setThemePanel(open) {
   if (open) {
     followPalette(parseSource(srcEl.value).overrides.settings.theme || DEFAULT_THEME);
     showPreviewMode();
+    // Narrow screens stack the panel below the diagram, out of sight: bring it into view.
+    if (matchMedia('(max-width: 860px)').matches) themePanel.scrollIntoView({ block: 'start' });
   } else {
     if (themePanel.contains(document.activeElement)) themeBtn.focus();
     setPreview(null);

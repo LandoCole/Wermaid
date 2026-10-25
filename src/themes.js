@@ -152,6 +152,37 @@ export function listThemes() {
   return Object.entries(THEMES).map(([name, t]) => ({ name, label: t.label }));
 }
 
+/** `theme: NO_THEME` asks for no palette at all: Mermaid's own config is left alone. */
+export const NO_THEME = 'none';
+
+/**
+ * Which theme a diagram draws with. `theme` forces one (NO_THEME: none at all), else the block's
+ * `@theme`, else the `defaults` (a name or a list, tried in order). Names that aren't registered
+ * are skipped and listed in `unknown`; when only unknown names were given, the result is wermaid.
+ * Returns { name, unknown }, where name is null when nothing asks for a theme.
+ */
+export function resolveTheme({ theme, block, defaults } = {}) {
+  if (theme === NO_THEME) return { name: null, unknown: [] };
+  const unknown = [];
+  for (const name of [theme, block, ...[defaults].flat()]) {
+    if (name == null || name === '') continue;
+    if (getTheme(name)) return { name, unknown };
+    if (!unknown.includes(name)) unknown.push(name);
+  }
+  return { name: unknown.length ? DEFAULT_THEME : null, unknown };
+}
+
+const listeners = new Set();
+
+/**
+ * Call `fn(name)` whenever defineTheme defines or redefines a theme, so diagrams and pickers
+ * already on the page can catch up. Returns a function that stops the calls.
+ */
+export function onThemesChange(fn) {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
 /* ---------- colours ---------- */
 
 function parseColor(v) {
@@ -415,7 +446,8 @@ function compile(spec, warnings) {
  * Every field is optional; missing ones come from `extends` (a built-in or an earlier custom
  * theme, resolved now), else `wermaid`. `extends: 'mermaid'` falls back to `wermaid` with a
  * warning shown on diagrams that use the theme. A dark colour left out is derived from its
- * light colour. Built-in names can't be redefined; custom ones can.
+ * light colour. Built-in names can't be redefined; custom ones can. Diagrams already drawn
+ * with the theme (or waiting for it) pick up the new definition (see onThemesChange).
  */
 export function defineTheme(name, spec = {}) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw new TypeError(`Theme names are lowercase letters, digits and dashes, starting with a letter — got "${name}"`);
@@ -428,7 +460,7 @@ export function defineTheme(name, spec = {}) {
   if (spec.extends != null) {
     if (spec.extends === 'mermaid') {
       warnings.push(`Theme "${name}" extends mermaid, which can't be extended; it extends wermaid instead.`);
-    } else if (BUILT_IN_SPECS[spec.extends]) {
+    } else if (Object.hasOwn(BUILT_IN_SPECS, spec.extends)) {
       parent = BUILT_IN_SPECS[spec.extends];
     } else if (getTheme(spec.extends)?.spec) {
       parent = getTheme(spec.extends).spec;
@@ -440,6 +472,10 @@ export function defineTheme(name, spec = {}) {
   const resolved = resolveSpec(parent, spec);
   resolved.label = spec.label ?? name;
   THEMES[name] = compile(resolved, warnings);
+  // A listener that throws doesn't stop the others, or fail the definition.
+  for (const fn of [...listeners]) {
+    try { fn(name); } catch (err) { queueMicrotask(() => { throw err; }); }
+  }
 }
 
 /**

@@ -13,9 +13,9 @@
  * ignores it and draws the stock layout.
  */
 
-import { THEMES, DEFAULT_THEME, THEME_NAME_RE, withTheme, defineTheme, listThemes, getTheme } from './themes.js';
+import { THEMES, DEFAULT_THEME, NO_THEME, THEME_NAME_RE, withTheme, defineTheme, listThemes, getTheme, resolveTheme, onThemesChange } from './themes.js';
 
-export { THEMES, DEFAULT_THEME, withTheme, defineTheme, listThemes, getTheme };
+export { THEMES, DEFAULT_THEME, NO_THEME, withTheme, defineTheme, listThemes, getTheme, resolveTheme, onThemesChange };
 export const VERSION = '0.4.0';
 
 /* ------------------------------------------------------------------ */
@@ -1300,10 +1300,11 @@ let counter = 0;
 export function createWermaid(mermaid) {
   /**
    * Render `source` into `container`.
-   * Options: `id` (SVG id), `theme` (forces a palette), `defaultTheme` (a name, or a list of
+   * Options: `id` (SVG id), `theme` (forces a palette; `'none'` forces no palette at all, over the
+   * block's `@theme` too, which stays in the source), `defaultTheme` (a name, or a list of
    * names tried in order, used when the block's `@theme` names no registered theme), `dark` (use the palette's dark variant).
    * With none of them, Mermaid's own config is left alone. A name that isn't registered is
-   * skipped with a warning; if no name resolves, `wermaid` is used.
+   * skipped with a warning; if no name resolves, `wermaid` is used (see resolveTheme).
    * `cache` (an object with `get(key)` and `set(key, value)`, such as a Map) keeps what Mermaid
    * drew, keyed by the exact text Mermaid is given; a later render of the same text mounts that
    * drawing again without calling Mermaid. The drawing keeps its first SVG id, so containers that
@@ -1313,14 +1314,7 @@ export function createWermaid(mermaid) {
     const parsed = parseSource(source);
     const svgId = id || `wm-${++counter}`;
     const themeWarnings = [];
-    let themeName = null;
-    const unknown = [];
-    for (const name of [theme, parsed.overrides.settings.theme, ...[defaultTheme].flat()]) {
-      if (name == null || name === '') continue;
-      if (getTheme(name)) { themeName = name; break; }
-      if (!unknown.includes(name)) unknown.push(name);
-    }
-    if (!themeName && unknown.length) themeName = DEFAULT_THEME;
+    const { name: themeName, unknown } = resolveTheme({ theme, block: parsed.overrides.settings.theme, defaults: defaultTheme });
     for (const name of unknown) themeWarnings.push(`Theme "${name}" isn't defined on this page; using ${themeName}.`);
     const themeDef = getTheme(themeName);
     if (themeDef?.warnings) themeWarnings.push(...themeDef.warnings);

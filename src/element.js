@@ -1,8 +1,8 @@
 /*
  * Embedding Wermaid in a page.
  *
- *   import mermaid from 'mermaid';
- *   import { defineWermaidElement, run } from 'wermaid/element';
+ *   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.esm.min.mjs';
+ *   import { defineWermaidElement, run } from 'https://cdn.jsdelivr.net/gh/LandoCole/Wermaid@v0.4.0/src/element.js';
  *
  *   defineWermaidElement(mermaid);   // registers <wermaid-diagram>
  *   run();                           // upgrades Mermaid code blocks already on the page
@@ -14,7 +14,9 @@
  *   theme      a theme name (mermaid, wermaid, pele or one from defineTheme) | none
  *              The diagram's own `%% @theme` wins; this is the starting theme for diagrams that
  *              name none. Then the page default (defineWermaidElement's `defaults.theme`),
- *              then wermaid. none = leave Mermaid's own config alone.
+ *              then wermaid. none = leave Mermaid's own config alone, even over the diagram's
+ *              `%% @theme` (which stays in the source); the theme picker is hidden then.
+ *              A theme defined after the diagram rendered is picked up when it is defined.
  *   dark       auto | true | false               (default auto: follows prefers-color-scheme)
  *   pannable   present = a canvas viewer: drag to pan, pinch or Ctrl/⌘ + scroll to zoom,
  *              double-click to fit
@@ -40,10 +42,11 @@
  * block as `%% @theme` / `%% @edges`, so it travels with the source.
  *
  * Adjustments are kept in the user's browser while `edit` is on, and put back when the same
- * diagram renders again (after a reload, say). The same diagram is the same source as supplied,
- * or the same `persist-key`. Reset forgets them.
+ * diagram renders again (after a reload, say). The same diagram is the same source as supplied
+ * (and the same `persist-key`, when there is one). Reset forgets them.
  *   persist      off = keep nothing (page-wide: defineWermaidElement's `defaults: { persist: false }`)
- *   persist-key  names the diagram, to tell identical sources apart (e.g. "message-123:diagram-1")
+ *   persist-key  names the diagram, to tell identical sources apart (e.g. "message-123:diagram-1");
+ *                a different source under the same key starts fresh
  *
  * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}},
  * `wermaid:change` {detail: {source, reason}} once per completed change, where reason is one of
@@ -53,7 +56,7 @@
  * `editedSource` is the source with the current block (the supplied source plus any edits).
  */
 
-import { createWermaid, parseSource, writeSource, DEFAULT_THEME, clampView, defineTheme, listThemes, getTheme } from './wermaid.js';
+import { createWermaid, parseSource, writeSource, DEFAULT_THEME, NO_THEME, clampView, defineTheme, listThemes, getTheme, resolveTheme, onThemesChange } from './wermaid.js';
 import { createEditor, createHistory } from './edit.js';
 import { createPersistence, sourceKey, withBlock } from './persist.js';
 
@@ -330,7 +333,7 @@ const TEMPLATE = `
       <button type="button" data-act="undo" aria-label="Undo" aria-disabled="true">Undo</button>
       <button type="button" data-act="redo" aria-label="Redo" aria-disabled="true">Redo</button>
       <button type="button" data-act="reset" aria-label="Reset to the diagram as it arrived">Reset</button>
-      <button type="button" data-act="compare" aria-pressed="false" aria-label="Show Mermaid’s own layout">Mermaid’s layout</button>
+      <button type="button" data-act="compare" aria-pressed="false" title="Show Mermaid’s own layout">Mermaid’s layout</button>
       <select data-act="theme" aria-label="Theme" title="Theme"></select>
       <select data-act="edges" aria-label="Edge look" title="Edge look">
         <option value="">Theme default</option>
@@ -371,6 +374,8 @@ const TEMPLATE = `
 `;
 
 const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+// Screens without hover (touch) show the toolbar all the time.
+const hoverless = typeof matchMedia === 'function' ? matchMedia('(hover: none)') : null;
 let fontLinkAdded = false;
 
 const themeSheets = new Map();
@@ -472,6 +477,7 @@ export class WermaidDiagram extends HTMLElement {
 
   connectedCallback() {
     darkQuery?.addEventListener('change', this._onDark);
+    this._offThemes ??= onThemesChange((name) => this._themeDefined(name));
     if (!this._observer) {
       // Inline source edited after the fact (by a framework, say) re-renders.
       this._observer = new MutationObserver(() => { if (this._source === null) this._newSource(); });
@@ -490,6 +496,8 @@ export class WermaidDiagram extends HTMLElement {
 
   disconnectedCallback() {
     darkQuery?.removeEventListener('change', this._onDark);
+    this._offThemes?.();
+    this._offThemes = null;
     // A watcher following the block this element replaced lets go once the element is removed.
     this._unfollow?.();
     this._observer?.disconnect();
@@ -607,11 +615,11 @@ export class WermaidDiagram extends HTMLElement {
         return null;
       }
       const block = parseSource(text);
-      const { used, fallbacks, none } = this._themeFor(block);
+      const { used, order } = this._themeFor(block);
       const dark = this._isDark();
       this.toggleAttribute('data-dark', dark);
       if (used) await ensureThemeAssets(used);
-      const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark, cache: this._cache });
+      const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: order.theme, defaultTheme: order.defaults, dark, cache: this._cache });
       this._diagram = diagram;
       this._renderKey = renderKey(block, used, dark);
       error.hidden = true;
@@ -639,13 +647,24 @@ export class WermaidDiagram extends HTMLElement {
    * Which theme a parsed source renders with: the block's @theme, then the attribute, then the
    * page default, then wermaid. The attribute and page default are only fallbacks, so a name the
    * page hasn't defined falls through to the next level (with a warning from the engine).
+   * theme="none" beats them all: no palette (the block's @theme stays in the text).
+   * Returns the theme `used` (null for none) and the `order` the engine resolves it from.
    */
   _themeFor(block) {
     const attr = this.getAttribute('theme');
-    const none = attr === 'none';
-    const fallbacks = none ? [] : [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean);
-    const used = [block.overrides.settings.theme, ...fallbacks].find((n) => getTheme(n)) ?? null;
-    return { used, fallbacks, none };
+    const order = attr === NO_THEME ? { theme: NO_THEME }
+      : { defaults: [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean) };
+    return { used: resolveTheme({ ...order, block: block.overrides.settings.theme }).name, order };
+  }
+
+  /**
+   * defineTheme ran: offer the theme in the picker, and draw again when this diagram uses it (a
+   * redefinition) or resolves to it now (it named the theme before it was defined).
+   */
+  _themeDefined(name) {
+    this._fillThemes();
+    this._updateEditChrome();
+    if (this._current !== null && this._themeFor(parseSource(this._current)).used === name) this._schedule();
   }
 
   _isDark() {
@@ -726,7 +745,9 @@ export class WermaidDiagram extends HTMLElement {
   _layoutKey() {
     if (this._supplied === null || !this.features.includes('edit')) return null;
     if (this.getAttribute('persist') === 'off' || pageDefaults.persist === false) return null;
-    return this.getAttribute('persist-key') || sourceKey(this._supplied);
+    // A persist-key tells identical sources apart; it never brings one source's layout to another.
+    const named = this.getAttribute('persist-key');
+    return named ? `${named}:${sourceKey(this._supplied)}` : sourceKey(this._supplied);
   }
 
   /** Keep the adjustments as they stand, or forget them when there are none. */
@@ -815,7 +836,7 @@ export class WermaidDiagram extends HTMLElement {
     const { themePick } = this.$;
     const attr = this.getAttribute('themes');
     const list = (attr !== null ? names(attr) : listThemes().map((t) => t.name)).filter((n, i, all) => getTheme(n) && all.indexOf(n) === i);
-    const key = list.join(' ');
+    const key = list.map((n) => `${n}=${getTheme(n).label}`).join('\n');
     if (themePick.dataset.list === key) return;
     themePick.dataset.list = key;
     themePick.replaceChildren(...list.map((n) => new Option(getTheme(n).label || n, n)));
@@ -844,7 +865,8 @@ export class WermaidDiagram extends HTMLElement {
     undo.hidden = redo.hidden = !features.includes('undo');
     reset.hidden = !features.includes('reset');
     compare.hidden = !features.includes('compare');
-    themePick.hidden = !features.includes('themes');
+    // With theme="none" a pick would change nothing on screen.
+    themePick.hidden = !features.includes('themes') || this.getAttribute('theme') === NO_THEME;
     edgePick.hidden = !features.includes('edges');
     if (this._stock && compare.hidden) this._setStock(false);
     this._fillThemes();
@@ -862,7 +884,10 @@ export class WermaidDiagram extends HTMLElement {
     // The classic toolbar stays on screen; the new one shows on hover and focus.
     toolbar.classList.toggle('always', legacy);
     toolbar.hidden = [undo, redo, reset, compare, themePick, edgePick, zoomers, exporter, copy, download, downloads].every((n) => n.hidden);
-    viewport.classList.toggle('roomy', [undo, redo, reset, compare, themePick, edgePick].some((n) => !n.hidden));
+    // A toolbar that is always on screen (the classic one, or any on a touch screen) gets a row of
+    // its own too, so it never covers the drawing.
+    const always = !toolbar.hidden && (legacy || !!hoverless?.matches);
+    viewport.classList.toggle('roomy', always || [undo, redo, reset, compare, themePick, edgePick].some((n) => !n.hidden));
     if (toolbar.hidden) this._menu(null);
     const h = this.getAttribute('height');
     if (h) this.style.setProperty('--wermaid-height', /^\d+(\.\d+)?$/.test(h) ? `${h}px` : h);
@@ -971,9 +996,13 @@ export class WermaidDiagram extends HTMLElement {
       if (this._openMenu && !this.shadowRoot.contains(ev.relatedTarget)) this._menu(null);
     });
 
-    // Keys reach the element only while focus is inside it. Pickers and menus keep their own keys.
+    // Keys reach the element only while focus is inside it. Pickers and menus keep their own keys,
+    // and so do the toolbar's buttons, except Ctrl/⌘ Z (arrows and Delete there aren't edits).
+    const toolbarKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Delete', 'Backspace']);
     this.addEventListener('keydown', (ev) => {
-      if (ev.composedPath()[0]?.closest?.('select, input, textarea, .menu')) return;
+      const from = ev.composedPath()[0];
+      if (from?.closest?.('select, input, textarea, .menu')) return;
+      if (toolbarKeys.has(ev.key) && from?.closest?.('.toolbar')) return;
       const mod = ev.ctrlKey || ev.metaKey;
       const key = ev.key.toLowerCase();
       if (mod && !ev.altKey && (key === 'z' || key === 'y')) {

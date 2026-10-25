@@ -549,6 +549,37 @@ function listThemes() {
   return Object.entries(THEMES).map(([name, t]) => ({ name, label: t.label }));
 }
 
+/** `theme: NO_THEME` asks for no palette at all: Mermaid's own config is left alone. */
+const NO_THEME = 'none';
+
+/**
+ * Which theme a diagram draws with. `theme` forces one (NO_THEME: none at all), else the block's
+ * `@theme`, else the `defaults` (a name or a list, tried in order). Names that aren't registered
+ * are skipped and listed in `unknown`; when only unknown names were given, the result is wermaid.
+ * Returns { name, unknown }, where name is null when nothing asks for a theme.
+ */
+function resolveTheme({ theme, block, defaults } = {}) {
+  if (theme === NO_THEME) return { name: null, unknown: [] };
+  const unknown = [];
+  for (const name of [theme, block, ...[defaults].flat()]) {
+    if (name == null || name === '') continue;
+    if (getTheme(name)) return { name, unknown };
+    if (!unknown.includes(name)) unknown.push(name);
+  }
+  return { name: unknown.length ? DEFAULT_THEME : null, unknown };
+}
+
+const listeners = new Set();
+
+/**
+ * Call `fn(name)` whenever defineTheme defines or redefines a theme, so diagrams and pickers
+ * already on the page can catch up. Returns a function that stops the calls.
+ */
+function onThemesChange(fn) {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
 /* ---------- colours ---------- */
 
 function parseColor(v) {
@@ -812,7 +843,8 @@ function compile(spec, warnings) {
  * Every field is optional; missing ones come from `extends` (a built-in or an earlier custom
  * theme, resolved now), else `wermaid`. `extends: 'mermaid'` falls back to `wermaid` with a
  * warning shown on diagrams that use the theme. A dark colour left out is derived from its
- * light colour. Built-in names can't be redefined; custom ones can.
+ * light colour. Built-in names can't be redefined; custom ones can. Diagrams already drawn
+ * with the theme (or waiting for it) pick up the new definition (see onThemesChange).
  */
 function defineTheme(name, spec = {}) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw new TypeError(`Theme names are lowercase letters, digits and dashes, starting with a letter — got "${name}"`);
@@ -825,7 +857,7 @@ function defineTheme(name, spec = {}) {
   if (spec.extends != null) {
     if (spec.extends === 'mermaid') {
       warnings.push(`Theme "${name}" extends mermaid, which can't be extended; it extends wermaid instead.`);
-    } else if (BUILT_IN_SPECS[spec.extends]) {
+    } else if (Object.hasOwn(BUILT_IN_SPECS, spec.extends)) {
       parent = BUILT_IN_SPECS[spec.extends];
     } else if (getTheme(spec.extends)?.spec) {
       parent = getTheme(spec.extends).spec;
@@ -837,6 +869,10 @@ function defineTheme(name, spec = {}) {
   const resolved = resolveSpec(parent, spec);
   resolved.label = spec.label ?? name;
   THEMES[name] = compile(resolved, warnings);
+  // A listener that throws doesn't stop the others, or fail the definition.
+  for (const fn of [...listeners]) {
+    try { fn(name); } catch (err) { queueMicrotask(() => { throw err; }); }
+  }
 }
 
 /**
@@ -2157,10 +2193,11 @@ let counter = 0;
 function createWermaid(mermaid) {
   /**
    * Render `source` into `container`.
-   * Options: `id` (SVG id), `theme` (forces a palette), `defaultTheme` (a name, or a list of
+   * Options: `id` (SVG id), `theme` (forces a palette; `'none'` forces no palette at all, over the
+   * block's `@theme` too, which stays in the source), `defaultTheme` (a name, or a list of
    * names tried in order, used when the block's `@theme` names no registered theme), `dark` (use the palette's dark variant).
    * With none of them, Mermaid's own config is left alone. A name that isn't registered is
-   * skipped with a warning; if no name resolves, `wermaid` is used.
+   * skipped with a warning; if no name resolves, `wermaid` is used (see resolveTheme).
    * `cache` (an object with `get(key)` and `set(key, value)`, such as a Map) keeps what Mermaid
    * drew, keyed by the exact text Mermaid is given; a later render of the same text mounts that
    * drawing again without calling Mermaid. The drawing keeps its first SVG id, so containers that
@@ -2170,14 +2207,7 @@ function createWermaid(mermaid) {
     const parsed = parseSource(source);
     const svgId = id || `wm-${++counter}`;
     const themeWarnings = [];
-    let themeName = null;
-    const unknown = [];
-    for (const name of [theme, parsed.overrides.settings.theme, ...[defaultTheme].flat()]) {
-      if (name == null || name === '') continue;
-      if (getTheme(name)) { themeName = name; break; }
-      if (!unknown.includes(name)) unknown.push(name);
-    }
-    if (!themeName && unknown.length) themeName = DEFAULT_THEME;
+    const { name: themeName, unknown } = resolveTheme({ theme, block: parsed.overrides.settings.theme, defaults: defaultTheme });
     for (const name of unknown) themeWarnings.push(`Theme "${name}" isn't defined on this page; using ${themeName}.`);
     const themeDef = getTheme(themeName);
     if (themeDef?.warnings) themeWarnings.push(...themeDef.warnings);
@@ -3646,7 +3676,7 @@ function cleanSpec(spec) {
   return Object.fromEntries([...SPEC_ORDER.filter((k) => k in out), ...Object.keys(out).filter((k) => !SPEC_ORDER.includes(k))].map((k) => [k, out[k]]));
 }
 /** What a spec resolves to (inherited and derived values filled in), without registering it. */
-function resolveTheme(spec) {
+function resolvedSpec(spec) {
   try { defineTheme(SCRATCH_THEME, spec); return THEMES[SCRATCH_THEME].spec; } catch { return null; } finally { delete THEMES[SCRATCH_THEME]; }
 }
 function uniqueName(base) {
@@ -3733,7 +3763,7 @@ function fillThemePanel() {
 /** Placeholders, swatches, the Start from list and the spacing note, from the resolved spec. */
 function showThemeDerived() {
   const spec = cleanSpec(builder.spec);
-  const resolved = resolveTheme(spec);
+  const resolved = resolvedSpec(spec);
   $('theme-label').placeholder = builder.name;
   // Start from: Wermaid, Pele and custom themes that don't already build on this one.
   const ext = $('theme-extends');
@@ -3870,6 +3900,8 @@ function setThemePanel(open) {
   if (open) {
     followPalette(parseSource(srcEl.value).overrides.settings.theme || DEFAULT_THEME);
     showPreviewMode();
+    // Narrow screens stack the panel below the diagram, out of sight: bring it into view.
+    if (matchMedia('(max-width: 860px)').matches) themePanel.scrollIntoView({ block: 'start' });
   } else {
     if (themePanel.contains(document.activeElement)) themeBtn.focus();
     setPreview(null);

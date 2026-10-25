@@ -245,5 +245,13 @@ ok('a bare import named like a stored theme gets its own name', (await storedNam
 await importTheme(`defineTheme('beta', { "colors": { "nodeFill": "#ccddee" } });`, 'beta');
 ok('an explicit defineTheme paste replaces and says so', (await p.textContent('#theme-msg')) === 'Replaced beta.' && (await p.evaluate(() => JSON.parse(localStorage.getItem('wermaid:themes:v1')).beta.colors.nodeFill)) === '#ccddee', await p.textContent('#theme-msg'));
 await p.screenshot({ path: SHOT + 'theme-builder.png' });
+// Narrow screens stack the theme panel below the diagram: opening it brings it into view.
+await p.click('#theme-close'); await p.waitForTimeout(200);
+await p.setViewportSize({ width: 700, height: 800 });
+await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(200);
+const panelTop = () => p.$eval('#theme-panel', (el) => Math.round(el.getBoundingClientRect().top));
+await p.click('#theme-btn'); await p.waitForTimeout(400);
+ok('opening the theme panel on a narrow screen scrolls it into view', Math.abs(await panelTop()) <= 1, await panelTop());
+await p.setViewportSize({ width: 1400, height: 900 });
 console.log(R.join('\n'));
 await b.close();

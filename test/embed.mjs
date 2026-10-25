@@ -26,7 +26,11 @@ ok('theme attribute applies when the block names none', await p.$eval('#pele', (
 ok('page default theme applies last', await p.$eval('#page-default', (e) => e.diagram.theme) === 'acme');
 ok('theme stylesheet loaded once', await p.$$eval('link[data-wermaid-theme="acme"]', (l) => l.length) === 1);
 ok('an unknown attribute falls through to the page default, with a warning', await p.$eval('#attr-unknown', (e) => e.diagram.theme === 'acme' && e.diagram.warnings.some((w) => w.includes('"nope"'))));
-ok('theme="none" renders with no palette', await p.$eval('#theme-none', (e) => e.diagram.theme === null || e.diagram.theme === undefined), await p.$eval('#theme-none', (e) => e.diagram.theme));
+// theme="none" leaves Mermaid's own config alone, even over the block's @theme (which the source keeps).
+ok('theme="none" beats a block @theme: no palette', await p.$eval('#theme-none', (e) => e.diagram.theme === null), await p.$eval('#theme-none', (e) => e.diagram.theme));
+ok('theme="none" draws with Mermaid\'s own fill', (await fill('theme-none')) === 'rgb(236, 236, 255)', await fill('theme-none'));
+ok('theme="none" keeps the block @theme in the source', await p.$eval('#theme-none', (e) => /%% @theme pele/.test(e.editedSource)));
+ok('theme="none" hides the theme picker', await p.$eval('#theme-none', (e) => e.shadowRoot.querySelector('[data-act="theme"]').hidden));
 ok('element re-exports listThemes', await p.evaluate(() => listThemes().some((t) => t.name === 'acme')));
 // 3. canvas viewer
 const t = () => p.$eval(el('canvas'), (e) => { const m = new DOMMatrix(getComputedStyle(e.shadowRoot.querySelector('.stage')).transform); return [m.e, m.f, e.shadowRoot.querySelector('output').textContent]; });

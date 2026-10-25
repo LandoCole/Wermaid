@@ -303,6 +303,10 @@ const snap = (svg) => ({
   const w = await wermaid.render(el, BASE, { id: 't9', theme: 'wermaid' });
   const wermaidRender = w;
   ok('theme: extends mermaid warns and uses wermaid', m.warnings.some((x) => x.includes('mermaid')) && mFill === fillOf(w), [m.warnings, mFill, fillOf(w)]);
+  ok('theme: extends an Object.prototype name warns, not throws', (() => {
+    try { defineTheme('proto', { extends: 'toString' }); } catch (e) { return e.message; }
+    return getTheme('proto')?.warnings.some((x) => x.includes('"toString", which isn\'t defined'));
+  })() === true);
   ok('theme: built-in names are protected', throws(() => defineTheme('pele', {})));
   ok('theme: bad names are rejected', throws(() => defineTheme('Acme', {})) && throws(() => defineTheme('9a', {})));
   ok('theme: spacing widens the layout', nodeGap(acmeRender) > nodeGap(wermaidRender), [nodeGap(acmeRender), nodeGap(wermaidRender)]);

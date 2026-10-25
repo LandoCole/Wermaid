@@ -2,8 +2,8 @@
  * Keeping a diagram's adjustments in the browser, for <wermaid-diagram>.
  *
  * An entry is the diagram's layout block (which includes the user's theme and edge-look picks),
- * stored under `wermaid:layout:<key>` as { block, used }. The key is the element's `persist-key`,
- * else a hash of the source as the app supplied it (see sourceKey). An index under
+ * stored under `wermaid:layout:<key>` as { block, used }. The key is a hash of the source as the
+ * app supplied it (see sourceKey), after the element's `persist-key` and a colon when it has one. An index under
  * `wermaid:layout:index` lists the keys, least recently used first, and keeps the newest 200.
  *
  * Storage can be missing, full or blocked. Every call is guarded, and the first failure turns
@@ -78,7 +78,8 @@ export function createPersistence() {
       let entry;
       try { entry = JSON.parse(raw); } catch { return null; }
       if (typeof entry?.block !== 'string') return null;
-      write(ls, key, entry.block);
+      // Marking it as recently used can fail (storage full, say); the block was read all the same.
+      try { write(ls, key, entry.block); } catch { failed = true; }
       return entry.block;
     }, null),
     /** Keep a block for a key. */
