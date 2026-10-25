@@ -1304,8 +1304,12 @@ export function createWermaid(mermaid) {
    * names tried in order, used when the block's `@theme` names no registered theme), `dark` (use the palette's dark variant).
    * With none of them, Mermaid's own config is left alone. A name that isn't registered is
    * skipped with a warning; if no name resolves, `wermaid` is used.
+   * `cache` (an object with `get(key)` and `set(key, value)`, such as a Map) keeps what Mermaid
+   * drew, keyed by the exact text Mermaid is given; a later render of the same text mounts that
+   * drawing again without calling Mermaid. The drawing keeps its first SVG id, so containers that
+   * share a cache must be in separate documents or shadow roots.
    */
-  async function render(container, source, { id, theme, defaultTheme, dark = false } = {}) {
+  async function render(container, source, { id, theme, defaultTheme, dark = false, cache } = {}) {
     const parsed = parseSource(source);
     const svgId = id || `wm-${++counter}`;
     const themeWarnings = [];
@@ -1321,25 +1325,30 @@ export function createWermaid(mermaid) {
     const themeDef = getTheme(themeName);
     if (themeDef?.warnings) themeWarnings.push(...themeDef.warnings);
     const body = themeName ? withTheme(parsed.body, themeName, { dark, el: container }) : parsed.body;
-    const { svg: svgText, bindFunctions } = await mermaid.render(svgId, body);
+    let drawn = cache?.get(body);
+    if (!drawn) {
+      const { svg: svgText, bindFunctions } = await mermaid.render(svgId, body);
+      let data = null, type = null, direction = null, curve = 'basis';
+      try {
+        const diag = await mermaid.mermaidAPI.getDiagramFromText(body);
+        type = diag.type;
+        if (typeof diag.db.getData === 'function') {
+          data = diag.db.getData();
+          direction = diag.db.getDirection?.() ?? null;
+        }
+        const cfg = mermaid.mermaidAPI.getConfig?.() || {};
+        curve = cfg.flowchart?.curve || 'basis';
+      } catch { /* fall through to stock-only */ }
+      drawn = { svgText, svgId, bindFunctions, data, type, direction, curve };
+      cache?.set(body, drawn);
+    }
+    const { svgText, bindFunctions, data, type, direction, curve } = drawn;
     container.innerHTML = svgText;
     const svg = container.querySelector('svg');
     bindFunctions?.(container);
 
-    let data = null, type = null, direction = null, curve = 'basis';
-    try {
-      const diag = await mermaid.mermaidAPI.getDiagramFromText(body);
-      type = diag.type;
-      if (typeof diag.db.getData === 'function') {
-        data = diag.db.getData();
-        direction = diag.db.getDirection?.() ?? null;
-      }
-      const cfg = mermaid.mermaidAPI.getConfig?.() || {};
-      curve = cfg.flowchart?.curve || 'basis';
-    } catch { /* fall through to stock-only */ }
-
     const supported = !!(data && data.nodes?.length && svg.querySelector('g.node'));
-    const scene = supported ? readScene(svg, svgId, data, direction) : null;
+    const scene = supported ? readScene(svg, drawn.svgId, data, direction) : null;
     if (scene) {
       scene.curve = curve;
       scene.padding = 8;
@@ -1350,7 +1359,7 @@ export function createWermaid(mermaid) {
     let geom = null;
 
     const diagram = {
-      svg, svgId, type, supported, scene,
+      svg, svgId: drawn.svgId, type, supported, scene,
       theme: themeName,
       background: themeDef ? themeDef.background(dark, container) ?? null : null,
       parseErrors: parsed.errors,

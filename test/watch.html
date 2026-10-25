@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;margin:16px;width:700px} #log > div{margin:16px 0}</style></head><body>
+<main id="log">
+  <div id="static"><p>An answer already on the page.</p><pre class="mermaid">flowchart LR
+  S1 --> S2</pre></div>
+  <div id="chat"></div>
+  <div id="chat2"></div>
+  <div id="chat3"></div>
+  <div id="later"></div>
+</main>
+<wermaid-diagram id="s" streaming>flowchart LR
+  P --></wermaid-diagram>
+<script type="module">
+import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
+import { defineWermaidElement, run } from '/src/element.js';
+// Load Mermaid's flowchart code first, so render times measure Wermaid rather than a first download.
+mermaid.initialize({ startOnLoad: false });
+await mermaid.render('warm-up', 'flowchart LR\n  a --> b');
+// Count every Mermaid render from here on.
+window.MERMAID_CALLS = 0;
+const render = mermaid.render.bind(mermaid);
+mermaid.render = (...args) => { window.MERMAID_CALLS++; return render(...args); };
+// Every render and error, with where it happened (the element's id or its message's) and when.
+window.EVENTS = [];
+const where = (el) => el.id || el.closest('#log > *')?.id || '';
+for (const type of ['wermaid:render', 'wermaid:error']) {
+  document.addEventListener(type, (ev) => EVENTS.push({ type: type.slice(8), where: where(ev.target), t: performance.now() }));
+}
+// When each timed render was asked for: run() for the static block, removing `streaming` for #s.
+window.STARTS = {};
+new MutationObserver(() => { if (!document.querySelector('#s').hasAttribute('streaming')) STARTS.s ??= performance.now(); })
+  .observe(document.querySelector('#s'), { attributes: true, attributeFilter: ['streaming'] });
+defineWermaidElement(mermaid, { fonts: false });
+STARTS.static = performance.now();
+window.RUN = run({ root: document.querySelector('#log'), watch: true });
+window.SETTLED = await window.RUN;
+window.READY = true;
+</script></body></html>

@@ -30,6 +30,8 @@
  *
  *   themes     space-separated theme names the theme picker offers (registered ones only;
  *              default: every registered theme)
+ *   streaming  present = the source is still arriving: draw nothing and show no error. Removing
+ *              it renders at once. (Without it, the element renders straight away.)
  *
  * Editing (`edit`) works as in the full editor: drag shapes, Alt-drag to pin, resize from corners,
  * drag lines to bend them, arrow keys to nudge (Shift for 10), Delete to reset the selection. The
@@ -88,29 +90,130 @@ export function defineWermaidElement(mermaid, { tag = 'wermaid-diagram', fonts =
  * Per-block options can be given as data attributes on the block (`data-theme`,
  * `data-dark`, `data-pannable`, `data-controls`, `data-features`, `data-formats`, `data-height`, `data-background`);
  * `attributes` sets defaults for every block. Resolves when all have rendered.
+ *
+ * With `watch: true` it keeps watching `root` and upgrades blocks as they appear, for pages that
+ * write answers in as they stream. Blocks already there render at once; a new or changing block
+ * renders once its text has been still for `settle` ms. Apps that rebuild a message's HTML on every
+ * chunk are fine: a block is followed by its place in its message (the child of `root` it is in),
+ * and a block that comes back with source already drawn reuses that drawing. The returned promise
+ * then has a `stop()` method that ends the watching. `run()` replaces the blocks it upgrades, so it
+ * is for pages that own their DOM; frameworks such as React use <wermaid-diagram> directly.
  */
-export async function run({
+export function run({
   root = document,
   selector = 'pre.mermaid, pre.wermaid, pre > code.language-mermaid, pre > code.language-wermaid',
   attributes = {},
+  watch = false,
+  settle = 400,
 } = {}) {
-  if (!engine) throw new Error('Call defineWermaidElement(mermaid) before run().');
+  if (!engine) return Promise.reject(new Error('Call defineWermaidElement(mermaid) before run().'));
   const made = [];
   for (const node of root.querySelectorAll(selector)) {
-    const block = node.matches('code') ? node.parentElement : node;
-    if (!block?.isConnected || block.dataset.wermaidProcessed) continue;
-    block.dataset.wermaidProcessed = 'true';
-    const el = document.createElement(options.tag);
-    for (const [name, value] of Object.entries(attributes)) setAttr(el, name, value);
-    for (const name of ['theme', 'dark', 'pannable', 'controls', 'features', 'formats', 'height', 'background']) {
-      const v = block.dataset[name] ?? (node !== block ? node.dataset[name] : undefined);
-      if (v !== undefined) setAttr(el, name, v === '' ? true : v);
-    }
-    el.source = sourceOf(node);
-    block.replaceWith(el);
-    made.push(el.rendered);
+    const el = upgrade(node, attributes, watch);
+    if (el) made.push(el.rendered);
   }
-  return Promise.allSettled(made);
+  const done = Promise.allSettled(made);
+  if (watch) done.stop = watchBlocks(root, selector, attributes, settle);
+  return done;
+}
+
+/** Replace one block (a <pre>, or the <code> in one) with the element; null if already done. */
+function upgrade(node, attributes, watched) {
+  const block = blockOf(node);
+  if (!block?.isConnected || block.dataset.wermaidProcessed) return null;
+  block.dataset.wermaidProcessed = 'true';
+  const el = document.createElement(options.tag);
+  for (const [name, value] of Object.entries(attributes)) setAttr(el, name, value);
+  for (const name of ['theme', 'dark', 'pannable', 'controls', 'features', 'formats', 'height', 'background']) {
+    const v = block.dataset[name] ?? (node !== block ? node.dataset[name] : undefined);
+    if (v !== undefined) setAttr(el, name, v === '' ? true : v);
+  }
+  // Elements a watcher makes share the drawing cache, so a rebuilt message doesn't run Mermaid again.
+  if (watched) { el._cache = drawings; watchedElements.add(el); }
+  el.source = sourceOf(node);
+  block.replaceWith(el);
+  return el;
+}
+
+const blockOf = (node) => (node.matches('code') ? node.parentElement : node);
+
+// What Mermaid drew, keyed by the text it was given; the 50 most recently used are kept.
+const drawings = {
+  map: new Map(),
+  get(key) {
+    const hit = this.map.get(key);
+    if (hit) { this.map.delete(key); this.map.set(key, hit); }
+    return hit;
+  },
+  set(key, value) {
+    this.map.delete(key);
+    this.map.set(key, value);
+    if (this.map.size > 50) this.map.delete(this.map.keys().next().value);
+  },
+};
+const watchedElements = new WeakSet();
+
+/**
+ * Upgrade blocks under `root` as they appear, each once its text has been still for `settle` ms.
+ * A block's timer belongs to its place: its message (the child of `root` it sits in) and its
+ * index among the blocks there, so a <pre> recreated with the same text keeps its timer. Returns
+ * a function that stops watching.
+ */
+function watchBlocks(root, selector, attributes, settle) {
+  const places = new WeakMap(); // message -> Map(index -> { node, text, timer, done })
+  const timing = new Set();
+  const placeOf = (block) => {
+    let message = block;
+    while (message.parentNode && message.parentNode !== root) message = message.parentNode;
+    let index = 0;
+    if (message !== block) {
+      const blocks = [...message.querySelectorAll(`${selector}, ${options.tag}`)]
+        .map((n) => (n.localName === options.tag ? (watchedElements.has(n) ? n : null) : blockOf(n)))
+        .filter((n, i, all) => n && all.indexOf(n) === i);
+      index = blocks.indexOf(block);
+    }
+    if (!places.has(message)) places.set(message, new Map());
+    const slots = places.get(message);
+    if (!slots.has(index)) slots.set(index, {});
+    return slots.get(index);
+  };
+  const scan = () => {
+    for (const node of root.querySelectorAll(selector)) {
+      const block = blockOf(node);
+      if (!block?.isConnected || block.dataset.wermaidProcessed) continue;
+      const text = sourceOf(node);
+      const place = placeOf(block);
+      const changed = place.text !== text;
+      place.node = node;
+      place.text = text;
+      // The same source this place has already drawn (the app rebuilt a finished message): now.
+      if (text === place.done) {
+        clearTimeout(place.timer); timing.delete(place);
+        upgrade(node, attributes, true);
+        continue;
+      }
+      if (!changed && timing.has(place)) continue;
+      clearTimeout(place.timer);
+      timing.add(place);
+      place.timer = setTimeout(() => {
+        timing.delete(place);
+        if (upgrade(place.node, attributes, true)) place.done = place.text;
+      }, settle);
+    }
+  };
+  let queued = false, stopped = false;
+  const observer = new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => { queued = false; if (!stopped) scan(); });
+  });
+  observer.observe(root, { childList: true, characterData: true, subtree: true });
+  return () => {
+    stopped = true;
+    observer.disconnect();
+    for (const place of timing) clearTimeout(place.timer);
+    timing.clear();
+  };
 }
 
 function setAttr(el, name, value) {
@@ -262,7 +365,7 @@ function ensureThemeAssets(name) {
 }
 
 export class WermaidDiagram extends HTMLElement {
-  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'themes', 'height', 'background'];
+  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'themes', 'height', 'background', 'streaming'];
 
   constructor() {
     super();
@@ -291,6 +394,8 @@ export class WermaidDiagram extends HTMLElement {
     this._lastVB = null;
     this._rendered = Promise.resolve(null);
     this._pending = false;
+    // run({ watch }) gives its elements the shared cache of drawings (see the engine's `cache`).
+    this._cache = null;
     this._onDark = () => { if ((this.getAttribute('dark') ?? 'auto') === 'auto') this._schedule(); };
     this._wire();
   }
@@ -355,6 +460,7 @@ export class WermaidDiagram extends HTMLElement {
     if (oldValue === value) return;
     if (name === 'src') this._newSource();
     else if (name === 'theme' || name === 'dark') this._schedule();
+    else if (name === 'streaming') { if (value === null) this._schedule(); else this.$.error.hidden = true; }
     else this._applyChrome();
   }
 
@@ -396,7 +502,8 @@ export class WermaidDiagram extends HTMLElement {
       this._rendered = new Promise((resolve, reject) => { this._settle = { resolve, reject }; });
       this._rendered.catch(() => {});
     }
-    if (this._pending) return;
+    // While the source is still streaming in, the render waits for the attribute to go.
+    if (this._pending || this.hasAttribute('streaming')) return;
     // Mermaid measures text as it lays out, so wait until the element is actually displayed
     // (it may start inside a closed <details>, a hidden tab, or display: none).
     if (!this.getClientRects().length) { this._whenVisible(); return; }
@@ -405,7 +512,11 @@ export class WermaidDiagram extends HTMLElement {
       this._pending = false;
       const settle = this._settle;
       this._settle = null;
-      queue = queue.then(() => this._render()).then(settle.resolve, settle.reject);
+      queue = queue.then(() => {
+        // Streaming started after this render was asked for: it waits, with any asked for since.
+        if (this.hasAttribute('streaming')) { this._settle = joinSettles(settle, this._settle); return; }
+        return this._render().then(settle.resolve, settle.reject);
+      });
     });
   }
 
@@ -458,7 +569,7 @@ export class WermaidDiagram extends HTMLElement {
       const dark = this._isDark();
       this.toggleAttribute('data-dark', dark);
       if (used) await ensureThemeAssets(used);
-      const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark });
+      const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark, cache: this._cache });
       this._diagram = diagram;
       this._renderKey = renderKey(block, used, dark);
       error.hidden = true;
@@ -982,6 +1093,12 @@ export class WermaidDiagram extends HTMLElement {
 
 const FEATURES = ['copy', 'download', 'edit', 'undo', 'reset', 'themes', 'edges', 'zoom', 'compare'];
 const FORMATS = ['png', 'svg', 'md'];
+
+/** One pending render's resolve/reject that settles both pending promises (b may be null). */
+function joinSettles(a, b) {
+  if (!b) return a;
+  return { resolve: (v) => { a.resolve(v); b.resolve(v); }, reject: (e) => { a.reject(e); b.reject(e); } };
+}
 
 /** What a render depends on besides the block: the body, the theme it resolves to, dark or light. */
 function renderKey(block, theme, dark) {

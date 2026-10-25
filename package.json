@@ -20,7 +20,7 @@
     "build": "node build.mjs",
     "serve": "node test/serve.mjs . ${WERMAID_TEST_PORT:-8765}",
     "link-mermaid": "ln -sfn node_modules/mermaid/dist mermaid-dist",
-    "test": "node test/run.mjs test/m1.html && node test/interact.mjs && node test/export.mjs && node test/embed.mjs && node test/features.mjs"
+    "test": "node test/run.mjs test/m1.html && node test/interact.mjs && node test/export.mjs && node test/embed.mjs && node test/features.mjs && node test/watch.mjs"
   },
   "peerDependencies": {
     "mermaid": "^11.0.0"
