@@ -2049,6 +2049,514 @@ function createWermaid(mermaid) {
 
 
 /*
+ * Wermaid editing: drag, resize, bend and nudge a rendered diagram, writing the result into its
+ * overrides. Shared by the full editor page and the <wermaid-diagram> element.
+ *
+ *   const editor = createEditor(surface, { snap, scale, onPreview, onCommit, onSelect });
+ *   editor.attach(diagram, diagram.overrides);   // after every render
+ *
+ * `surface` is the element that holds the diagram's SVG (it may sit in a shadow root). Pointer
+ * handling is attached to it; presses on its background are left alone (no preventDefault), so
+ * the host can pan. The host owns the source text: it writes `overrides` back on `onPreview`
+ * (during a drag) and `onCommit` (once per finished change).
+ *
+ * The overlay keeps fixed class names (`.wm-overlay`, `.wm-hit`, `[data-handle]`) so exports
+ * can strip it and hosts can style it. While a shape is dragged the surface has the class
+ * `dragging`.
+ */
+
+
+
+/**
+ * @param {Element} surface
+ * @param {{ snap?: () => boolean, scale?: () => number, onPreview?: (overrides) => void,
+ *   onCommit?: (overrides, reason: 'drag'|'key'|'reset'|'pin'|'style') => void,
+ *   onSelect?: (selection) => void }} [options]
+ */
+function createEditor(surface, {
+  snap = () => false,
+  scale = () => 1,
+  onPreview = () => {},
+  onCommit = () => {},
+  onSelect = () => {},
+} = {}) {
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  let diagram = null;
+  let overrides = emptyOverrides();
+  let selection = null;        // { kind: 'node' | 'cluster' | 'edge', id }
+  let showStock = false;
+  let drag = null;
+  let dragViewBox = null;      // the frame held still while a shape is dragged
+  let raf = 0;
+  let lastPress = { key: '', time: 0 };
+
+  /* ---------- overrides helpers ---------- */
+  function entryFor(kind, id, create = true) {
+    const key = kind === 'edge' ? `edge:${id}` : id;
+    let e = overrides.targets.get(key);
+    if (!e && create) {
+      e = { kind: kind === 'edge' ? 'edge' : 'node', selector: id };
+      if (kind === 'edge') e.resolved = id;
+      overrides.targets.set(key, e);
+    }
+    return e;
+  }
+  function clearEntry(kind, id) {
+    overrides.targets.delete(kind === 'edge' ? `edge:${id}` : id);
+  }
+  const snapped = (v) => (snap() ? Math.round(v / 8) * 8 : Math.round(v * 10) / 10);
+  const isPinned = (id) => !!entryFor('node', id, false)?.at;
+
+  /** Re-key edge entries by resolved edge id so lookups are stable. */
+  function normalizeOverrides() {
+    const next = new Map();
+    for (const [key, e] of overrides.targets) {
+      if (e.kind === 'edge' && e.resolved) next.set(`edge:${e.resolved}`, e);
+      else next.set(key, e);
+    }
+    overrides.targets = next;
+  }
+
+  function targetExists(sel) {
+    const s = diagram?.scene;
+    if (!s) return false;
+    return sel.kind === 'node' ? s.nodes.has(sel.id) : sel.kind === 'cluster' ? s.clusters.has(sel.id) : s.edges.has(sel.id);
+  }
+
+  /* ---------- edge hit areas ---------- */
+  function addHitPaths() {
+    if (!diagram?.scene) return;
+    for (const e of diagram.scene.edges.values()) {
+      if (e.hitEl) continue;
+      const hit = diagram.svg.ownerDocument.createElementNS(SVGNS, 'path');
+      hit.setAttribute('class', 'wm-hit');
+      hit.dataset.wmEdge = e.id;
+      e.pathEl.after(hit);
+      e.hitEl = hit;
+    }
+  }
+  function syncHitPaths() {
+    if (!diagram?.scene) return;
+    for (const e of diagram.scene.edges.values()) {
+      if (!e.hitEl) continue;
+      e.hitEl.setAttribute('d', e.pathEl.getAttribute('d'));
+      const t = e.pathEl.getAttribute('transform');
+      t ? e.hitEl.setAttribute('transform', t) : e.hitEl.removeAttribute('transform');
+      e.hitEl.style.display = showStock ? 'none' : '';
+    }
+  }
+
+  /* ---------- overlay ---------- */
+  function overlayGroup() {
+    let g = diagram.svg.querySelector(':scope > g.wm-overlay');
+    if (!g) {
+      g = el('g', { class: 'wm-overlay' });
+      diagram.svg.append(g);
+    }
+    return g;
+  }
+  function el(tag, attrs, parent) {
+    const n = diagram.svg.ownerDocument.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    parent?.append(n);
+    return n;
+  }
+  function drawOverlay() {
+    if (!diagram?.svg) return;
+    const g = overlayGroup();
+    g.replaceChildren();
+    if (showStock || !diagram.supported || !diagram.geometry) return;
+    const k = 1 / scale();
+    const geom = diagram.geometry;
+
+    // Small markers on shapes that carry an override.
+    for (const [id, n] of geom.nodes) {
+      const ov = overrides.targets.get(id);
+      if (ov && (ov.at || ov.nudge || ov.size)) el('circle', { class: ov.at ? 'pin' : 'pin hollow', cx: n.box.x + n.box.w, cy: n.box.y, r: 3 * k }, g);
+    }
+    if (!selection) return;
+    if (selection.kind === 'node' || selection.kind === 'cluster') {
+      const b = (selection.kind === 'node' ? geom.nodes : geom.clusters).get(selection.id)?.box;
+      if (!b) return;
+      const p = 4 * k;
+      el('rect', { class: 'sel', x: b.x - p, y: b.y - p, width: b.w + 2 * p, height: b.h + 2 * p }, g);
+      if (selection.kind === 'node') {
+        const s = 8 * k;
+        const corners = { nw: [b.x, b.y], ne: [b.x + b.w, b.y], sw: [b.x, b.y + b.h], se: [b.x + b.w, b.y + b.h] };
+        for (const [name, [x, y]] of Object.entries(corners)) {
+          el('rect', { class: `h corner ${name}`, x: x - s / 2, y: y - s / 2, width: s, height: s, 'data-handle': `corner:${name}` }, g);
+        }
+      }
+    } else if (selection.kind === 'edge') {
+      const e = diagram.scene.edges.get(selection.id);
+      const ge = geom.edges.get(selection.id);
+      if (!e || !ge) return;
+      const outline = el('path', { class: 'edge-sel', d: e.pathEl.getAttribute('d') }, g);
+      const m = ctmToDiagram(e.pathEl);
+      outline.setAttribute('transform', `matrix(${m.a},${m.b},${m.c},${m.d},${m.e},${m.f})`);
+      const route = routePoints(selection.id);
+      const r = 5 * k;
+      for (let i = 0; i < route.length - 1; i++) {
+        const a = route[i], b = route[i + 1];
+        el('circle', { class: 'h add', cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: r * 0.85, 'data-handle': `add:${i}` }, g);
+      }
+      (entryFor('edge', selection.id, false)?.via || []).forEach((v, i) => {
+        el('circle', { class: 'h via', cx: v.x, cy: v.y, r, 'data-handle': `via:${i}` }, g);
+      });
+    }
+  }
+
+  /** Matrix from an element's user space to the diagram's, as it is drawn right now. */
+  function ctmToDiagram(node) {
+    return diagram.svg.getScreenCTM().inverse().multiply(node.getScreenCTM());
+  }
+
+  /** Points a user edits for an edge: its two ends plus any waypoints. */
+  function routePoints(id) {
+    const ge = diagram.geometry.edges.get(id);
+    const via = entryFor('edge', id, false)?.via || [];
+    if (via.length) return [ge.points[0], ...via, ge.points.at(-1)];
+    // Auto route: put the "+" on the drawn line's real midpoint.
+    const e = diagram.scene.edges.get(id);
+    const mid = e.pathEl.getPointAtLength(e.pathEl.getTotalLength() / 2).matrixTransform(ctmToDiagram(e.pathEl));
+    return [ge.points[0], { x: mid.x, y: mid.y }, ge.points.at(-1)];
+  }
+
+  /* ---------- applying ---------- */
+  function apply() {
+    if (!diagram) return;
+    if (showStock) diagram.showStock();
+    else { diagram.setOverrides(overrides); normalizeOverrides(); }
+    if (dragViewBox) {
+      // Hold the frame still while dragging; it refits when the drag ends.
+      diagram.svg.setAttribute('viewBox', dragViewBox);
+    }
+    syncHitPaths();
+    drawOverlay();
+  }
+
+  function commit(reason) {
+    apply();
+    onCommit(overrides, reason);
+  }
+
+  /* ---------- placing nodes: nudge by default, pin on request ---------- */
+  /** Put a node's center at an absolute point, stored as a nudge (default) or a pin. */
+  function placeNode(id, center, { pin = isPinned(id), snap: onGrid = true } = {}) {
+    const e = entryFor('node', id);
+    const inh = diagram.geometry.nodes.get(id).inherited;
+    const base = diagram.scene.nodes.get(id).box;
+    const q = (v) => (onGrid ? snapped(v) : Math.round(v * 10) / 10);
+    if (pin) {
+      e.at = { x: q(center.x) - inh.x, y: q(center.y) - inh.y };
+      delete e.nudge;
+    } else {
+      e.nudge = { x: q(center.x - inh.x - base.cx), y: q(center.y - inh.y - base.cy) };
+      delete e.at;
+    }
+  }
+
+  /** Move the selected node or subgraph by (dx, dy) diagram units. */
+  function moveSelection(dx, dy) {
+    if (!diagram?.geometry || !selection) return false;
+    const geom = diagram.geometry;
+    if (selection.kind === 'node') {
+      const n = geom.nodes.get(selection.id);
+      placeNode(selection.id, { x: n.box.cx + dx, y: n.box.cy + dy }, { snap: false });
+    } else if (selection.kind === 'cluster') {
+      const c = geom.clusters.get(selection.id);
+      const e = entryFor('cluster', selection.id);
+      e.nudge = { x: c.offset.x + dx, y: c.offset.y + dy };
+      delete e.at;
+    } else return false;
+    return true;
+  }
+
+  function setPinned(pin) {
+    if (!diagram?.geometry || selection?.kind !== 'node') return;
+    const n = diagram.geometry.nodes.get(selection.id);
+    placeNode(selection.id, { x: n.box.cx, y: n.box.cy }, { pin, snap: false });
+    commit('pin');
+  }
+
+  function select(sel) {
+    const changed = (sel?.kind !== selection?.kind) || (sel?.id !== selection?.id);
+    selection = sel ? { kind: sel.kind, id: sel.id } : null;
+    drawOverlay();
+    if (changed) onSelect(selection);
+  }
+
+  /* ---------- pointer interaction ---------- */
+  function hitTarget(target) {
+    const handle = target.closest('[data-handle]');
+    if (handle) return { type: 'handle', handle: handle.dataset.handle };
+    const hit = target.closest('.wm-hit');
+    if (hit) return { type: 'edge', id: hit.dataset.wmEdge };
+    const s = diagram.scene;
+    const label = target.closest('g.edgeLabel');
+    if (label) for (const e of s.edges.values()) if (e.labelEl === label) return { type: 'label', id: e.id };
+    const node = target.closest('g.node');
+    if (node) for (const n of s.nodes.values()) if (n.el === node || n.el.contains(node)) return { type: 'node', id: n.id };
+    for (const n of s.nodes.values()) if (n.el.contains(target)) return { type: 'node', id: n.id };
+    // Clusters: innermost one whose group contains the target.
+    let best = null;
+    for (const c of s.clusters.values()) if (c.el.contains(target) && (!best || best.depth < c.depth)) best = c;
+    if (best) return { type: 'cluster', id: best.id };
+    return { type: 'none' };
+  }
+
+  /** Pointer events don't report click counts reliably, so detect a double press ourselves. */
+  function isDoublePress(key) {
+    const now = performance.now();
+    const dbl = lastPress.key === key && now - lastPress.time < 400;
+    lastPress = dbl ? { key: '', time: 0 } : { key, time: now };
+    return dbl;
+  }
+
+  function onPointerDown(ev) {
+    if (!diagram?.supported || showStock || ev.button !== 0) return;
+    // Empty surface: leave it to the host's panning.
+    if (!diagram.svg.contains(ev.target)) return;
+    const t = hitTarget(ev.target);
+    const p0 = diagram.toDiagram(ev.clientX, ev.clientY);
+    const geom = diagram.geometry;
+    drag = { p0, moved: false, pointerId: ev.pointerId };
+
+    if (t.type === 'handle') {
+      const [kind, arg] = t.handle.split(':');
+      if (kind === 'corner') {
+        const b = geom.nodes.get(selection.id).box;
+        const fixed = { nw: [b.x + b.w, b.y + b.h], ne: [b.x, b.y + b.h], sw: [b.x + b.w, b.y], se: [b.x, b.y] }[arg];
+        Object.assign(drag, { kind: 'resize', id: selection.id, fixed: { x: fixed[0], y: fixed[1] }, inherited: geom.nodes.get(selection.id).inherited });
+      } else if (kind === 'via' && isDoublePress(`${selection.id}:${arg}`)) {
+        // Double-click on a bend removes it.
+        const e = entryFor('edge', selection.id);
+        e.via = e.via.filter((_, i) => i !== +arg);
+        if (!e.via.length) delete e.via;
+        drag = null;
+        ev.preventDefault();
+        commit('drag');
+        return;
+      } else if (kind === 'via') {
+        Object.assign(drag, { kind: 'via', id: selection.id, index: +arg, start: { ...entryFor('edge', selection.id).via[+arg] } });
+      } else if (kind === 'add') {
+        const e = entryFor('edge', selection.id);
+        const route = routePoints(selection.id);
+        const a = route[+arg], b = route[+arg + 1];
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        e.via = [...(e.via || [])];
+        const index = Math.min(+arg, e.via.length);
+        e.via.splice(index, 0, mid);
+        Object.assign(drag, { kind: 'via', id: selection.id, index, start: mid });
+      }
+    } else if (t.type === 'node') {
+      select({ kind: 'node', id: t.id });
+      const n = geom.nodes.get(t.id);
+      // Alt flips the default: drag nudges, Alt-drag pins (and the reverse for a pinned node).
+      Object.assign(drag, { kind: 'node', id: t.id, start: { x: n.box.cx, y: n.box.cy }, pin: isPinned(t.id) !== ev.altKey });
+    } else if (t.type === 'cluster') {
+      select({ kind: 'cluster', id: t.id });
+      Object.assign(drag, { kind: 'cluster', id: t.id, start: { ...geom.clusters.get(t.id).offset } });
+    } else if (t.type === 'label') {
+      select({ kind: 'edge', id: t.id });
+      const ov = entryFor('edge', t.id, false);
+      Object.assign(drag, { kind: 'label', id: t.id, start: { ...(ov?.label || { x: 0, y: 0 }) } });
+    } else if (t.type === 'edge') {
+      select({ kind: 'edge', id: t.id });
+      // Pressing on a line adds a bend on the nearest segment and drags it.
+      const route = routePoints(t.id);
+      let bestI = 0, bestD = Infinity;
+      for (let i = 0; i < route.length - 1; i++) {
+        const d = distToSegment(p0, route[i], route[i + 1]);
+        if (d < bestD) { bestD = d; bestI = i; }
+      }
+      const existing = entryFor('edge', t.id, false)?.via?.length || 0;
+      Object.assign(drag, { kind: 'newvia', id: t.id, index: Math.min(bestI, existing), start: { x: p0.x, y: p0.y } });
+    } else {
+      // Background of the drawing: left to the host (it pans, and a plain click deselects).
+      drag = null;
+      return;
+    }
+    surface.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  }
+
+  function onPointerMove(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
+    const p = diagram.toDiagram(ev.clientX, ev.clientY);
+    const dx = p.x - drag.p0.x, dy = p.y - drag.p0.y;
+    if (!drag.moved) {
+      if (Math.hypot(dx, dy) * scale() < 3) return;
+      drag.moved = true;
+      dragViewBox = diagram.svg.getAttribute('viewBox');
+      surface.classList.add('dragging');
+      if (drag.kind === 'newvia') {
+        const e = entryFor('edge', drag.id);
+        e.via = [...(e.via || [])];
+        e.via.splice(drag.index, 0, { ...drag.start });
+        drag.kind = 'via';
+      }
+    }
+    const s = drag.start;
+    switch (drag.kind) {
+      case 'node': {
+        placeNode(drag.id, { x: s.x + dx, y: s.y + dy }, { pin: drag.pin });
+        break;
+      }
+      case 'cluster': {
+        const e = entryFor('cluster', drag.id);
+        e.nudge = { x: snapped(s.x + dx), y: snapped(s.y + dy) };
+        delete e.at;
+        break;
+      }
+      case 'resize': {
+        const q = { x: snapped(p.x), y: snapped(p.y) };
+        const w = Math.max(16, Math.abs(q.x - drag.fixed.x)), h = Math.max(16, Math.abs(q.y - drag.fixed.y));
+        const cx = drag.fixed.x + Math.sign(q.x - drag.fixed.x || 1) * w / 2;
+        const cy = drag.fixed.y + Math.sign(q.y - drag.fixed.y || 1) * h / 2;
+        entryFor('node', drag.id).size = { w, h };
+        placeNode(drag.id, { x: cx, y: cy }, { snap: false });
+        break;
+      }
+      case 'via': {
+        const e = entryFor('edge', drag.id);
+        e.via = [...e.via];
+        e.via[drag.index] = { x: snapped(s.x + dx), y: snapped(s.y + dy) };
+        break;
+      }
+      case 'label': {
+        const e = entryFor('edge', drag.id);
+        e.label = { x: Math.round(s.x + dx), y: Math.round(s.y + dy) };
+        break;
+      }
+    }
+    scheduleApply();
+  }
+
+  function scheduleApply() {
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; apply(); onPreview(overrides); });
+  }
+
+  function endDrag(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
+    const wasMoved = drag.moved;
+    drag = null;
+    dragViewBox = null;
+    surface.classList.remove('dragging');
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    if (wasMoved) commit('drag');
+  }
+
+  surface.addEventListener('pointerdown', onPointerDown);
+  surface.addEventListener('pointermove', onPointerMove);
+  surface.addEventListener('pointerup', endDrag);
+  surface.addEventListener('pointercancel', endDrag);
+
+  /* ---------- keyboard ---------- */
+  function handleKey(ev) {
+    if (!selection || !diagram?.supported || showStock) return false;
+    if (ev.key === 'Escape') { select(null); return true; }
+    if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      ev.preventDefault();
+      clearEntry(selection.kind, selection.id);
+      commit('reset');
+      return true;
+    }
+    const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[ev.key];
+    if (!dir) return false;
+    ev.preventDefault();
+    const step = ev.shiftKey ? 10 : snap() ? 8 : 1;
+    if (moveSelection(dir[0] * step, dir[1] * step)) commit('key');
+    return true;
+  }
+
+  return {
+    /** Take over a freshly rendered diagram (or new overrides for the same one) and draw. */
+    attach(next, nextOverrides) {
+      diagram = next;
+      overrides = nextOverrides || next?.overrides || emptyOverrides();
+      addHitPaths();
+      if (selection && !targetExists(selection)) { selection = null; onSelect(null); }
+      apply();
+    },
+    get selection() { return selection; },
+    select,
+    get overrides() { return overrides; },
+    apply,
+    setStock(on) {
+      showStock = !!on;
+      apply();
+    },
+    nudge(dx, dy) {
+      if (!diagram?.supported || showStock) return;
+      if (moveSelection(dx, dy)) commit('key');
+    },
+    resetSelection() {
+      if (!selection) return;
+      clearEntry(selection.kind, selection.id);
+      commit('reset');
+    },
+    pin() { setPinned(true); },
+    unpin() { setPinned(false); },
+    setEdgeStyle(edgeId, style) {
+      if (style) entryFor('edge', edgeId).style = style;
+      else { const e = entryFor('edge', edgeId, false); if (e) delete e.style; }
+      commit('style');
+    },
+    handleKey,
+    destroy() {
+      surface.removeEventListener('pointerdown', onPointerDown);
+      surface.removeEventListener('pointermove', onPointerMove);
+      surface.removeEventListener('pointerup', endDrag);
+      surface.removeEventListener('pointercancel', endDrag);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      drag = null; dragViewBox = null;
+      surface.classList.remove('dragging');
+      diagram?.svg.querySelector(':scope > g.wm-overlay')?.remove();
+      for (const e of diagram?.scene?.edges.values() || []) { e.hitEl?.remove(); delete e.hitEl; }
+      diagram = null; selection = null;
+    },
+  };
+}
+
+function distToSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/**
+ * Undo and redo over whole source texts. `push` records the text before a change;
+ * `undo(current)` / `redo(current)` take the text now shown and return the one to show (or null).
+ */
+function createHistory(limit = 200) {
+  const undoStack = [], redoStack = [];
+  return {
+    push(text) {
+      if (undoStack.at(-1) === text) return;
+      undoStack.push(text);
+      if (undoStack.length > limit) undoStack.shift();
+      redoStack.length = 0;
+    },
+    undo(current) {
+      if (!undoStack.length) return null;
+      redoStack.push(current);
+      return undoStack.pop();
+    },
+    redo(current) {
+      if (!redoStack.length) return null;
+      undoStack.push(current);
+      return redoStack.pop();
+    },
+    clear() { undoStack.length = 0; redoStack.length = 0; },
+    get canUndo() { return undoStack.length > 0; },
+    get canRedo() { return redoStack.length > 0; },
+  };
+}
+
+/*
  * Embedding Wermaid in a page.
  *
  *   import mermaid from 'mermaid';
@@ -2078,10 +2586,23 @@ function createWermaid(mermaid) {
  *   background palette | none | <css colour>     (default none; palette when pannable)
  *   src        URL of a .mmd / text file to load instead of the element's text
  *
- * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}}.
+ *   themes     space-separated theme names the theme picker offers (registered ones only;
+ *              default: every registered theme)
+ *
+ * Editing (`edit`) works as in the full editor: drag shapes, Alt-drag to pin, resize from corners,
+ * drag lines to bend them, arrow keys to nudge (Shift for 10), Delete to reset the selection. The
+ * element is focusable then, and keys act only while focus is inside it. Ctrl/⌘ Z undoes,
+ * Shift+Ctrl/⌘ Z (or Ctrl/⌘ Y) redoes. A theme or edge-look pick is written into the diagram's
+ * block as `%% @theme` / `%% @edges`, so it travels with the source.
+ *
+ * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}},
+ * `wermaid:change` {detail: {source, reason}} once per completed change, where reason is one of
+ * drag key reset undo redo pin style theme edges, and source is the full text with its block.
  * Property `rendered` is a promise for the latest render; `diagram` is the latest result;
- * `features` is the resolved list of features (set it with an array or a space-separated string).
+ * `features` is the resolved list of features (set it with an array or a space-separated string);
+ * `editedSource` is the source with the current block (the supplied source plus any edits).
  */
+
 
 
 
@@ -2154,9 +2675,13 @@ const STYLE = `
   :host { display: block; position: relative; --wermaid-height: 420px;
     --wermaid-ui-bg: #F9F9F7; --wermaid-ui-fg: #1E1F22; --wermaid-ui-muted: #696A6F; --wermaid-ui-line: #BDBDC1; }
   :host([data-dark]) { --wermaid-ui-bg: #151516; --wermaid-ui-fg: #E7E7E3; --wermaid-ui-muted: #9B9CA0; --wermaid-ui-line: #3A3A3F; }
+  :host(:focus) { outline: none; }
+  :host(:focus-visible) { outline: 2px solid var(--wermaid-ui-fg); outline-offset: 2px; }
   [hidden] { display: none !important; }
   .viewport { position: relative; background: var(--wermaid-bg, transparent); }
   .stage svg { display: block; margin-inline: auto; }
+  /* Inline diagrams with editing controls keep a row clear for the toolbar, so it never covers shapes. */
+  .viewport.roomy:not(.pan) { padding-top: 40px; }
   .viewport.pan { height: var(--wermaid-height); overflow: hidden; cursor: grab; touch-action: none; }
   .viewport.pan .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
   .viewport.pan .stage svg { margin: 0; max-width: none !important; }
@@ -2169,8 +2694,14 @@ const STYLE = `
   .toolbar button { border: 0; background: none; color: inherit; font: inherit; padding: 4px 7px; cursor: pointer; }
   .toolbar button:hover, .toolbar button:focus-visible { background: var(--wermaid-ui-line); outline: none; }
   .toolbar button:focus-visible { box-shadow: inset 0 0 0 2px var(--wermaid-ui-fg); }
+  .toolbar select { border: 0; background: none; color: inherit; font: inherit; padding: 4px 2px; cursor: pointer; max-width: 16ch; }
+  .toolbar select:hover, .toolbar select:focus-visible { background: var(--wermaid-ui-line); outline: none; }
+  .toolbar select:focus-visible { box-shadow: inset 0 0 0 2px var(--wermaid-ui-fg); }
+  .toolbar option { background: var(--wermaid-ui-bg); color: var(--wermaid-ui-fg); }
+  .toolbar [aria-disabled="true"] { color: var(--wermaid-ui-muted); cursor: default; }
+  .toolbar [aria-pressed="true"] { background: var(--wermaid-ui-fg); color: var(--wermaid-ui-bg); }
   .toolbar { opacity: 0; }
-  :host(:hover) .toolbar, .toolbar:focus-within, .toolbar.always { opacity: 1; }
+  :host(:hover) .toolbar, :host(:focus-visible) .toolbar, .toolbar:focus-within, .toolbar.always { opacity: 1; }
   @media (hover: none) { .toolbar { opacity: 1; } }
   [aria-haspopup]::after { content: " ▾"; }
   .toolbar output { min-width: 4.5ch; text-align: center; color: var(--wermaid-ui-muted); font-variant-numeric: tabular-nums; }
@@ -2181,6 +2712,23 @@ const STYLE = `
   .menu button { text-align: left; padding: 7px 12px; }
   .note { position: absolute; left: 8px; bottom: 8px; z-index: 2; margin: 0; padding: 4px 8px; font: 12px/1.4 ui-monospace, Menlo, monospace;
     background: var(--wermaid-ui-bg); color: var(--wermaid-ui-fg); border: 1px solid var(--wermaid-ui-line); }
+  /* Editing: the overlay and hit areas drawn by edit.js. */
+  .stage.editable { user-select: none; -webkit-user-select: none; }
+  .stage.editable svg { overflow: visible; }
+  .stage.editable svg g.node, .stage.editable svg g.edgeLabel,
+  .stage.editable svg g.cluster > rect, .stage.editable svg .statediagram-cluster rect { cursor: move; }
+  .stage.dragging, .stage.dragging * { cursor: grabbing !important; }
+  .stage.editable svg g.node, .stage.editable svg g.edgeLabel, .wm-hit, .wm-overlay .h { touch-action: none; }
+  .wm-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: crosshair; }
+  .wm-overlay .sel { fill: none; stroke: var(--wermaid-ui-fg); stroke-width: 1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .edge-sel { fill: none; stroke: var(--wermaid-ui-fg); stroke-width: 5px; opacity: 0.12; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .h { fill: var(--wermaid-ui-bg); stroke: var(--wermaid-ui-fg); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .wm-overlay .h.corner { cursor: nwse-resize; }
+  .wm-overlay .h.corner.ne, .wm-overlay .h.corner.sw { cursor: nesw-resize; }
+  .wm-overlay .h.via { fill: var(--wermaid-ui-fg); cursor: move; }
+  .wm-overlay .h.add { cursor: copy; }
+  .wm-overlay .pin { fill: var(--wermaid-ui-fg); pointer-events: none; }
+  .wm-overlay .pin.hollow { fill: var(--wermaid-ui-bg); stroke: var(--wermaid-ui-fg); stroke-width: 1px; vector-effect: non-scaling-stroke; }
   .error { margin: 0; padding: 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #9a4d07; white-space: pre-wrap; }
 `;
 
@@ -2189,6 +2737,18 @@ const TEMPLATE = `
   <div class="viewport" part="viewport">
     <div class="stage" part="stage"></div>
     <div class="toolbar" part="toolbar" role="toolbar" aria-label="Diagram tools" hidden>
+      <button type="button" data-act="undo" aria-label="Undo" aria-disabled="true">Undo</button>
+      <button type="button" data-act="redo" aria-label="Redo" aria-disabled="true">Redo</button>
+      <button type="button" data-act="reset" aria-label="Reset to the diagram as it arrived">Reset</button>
+      <button type="button" data-act="compare" aria-pressed="false" aria-label="Show Mermaid’s own layout">Mermaid’s layout</button>
+      <select data-act="theme" aria-label="Theme" title="Theme"></select>
+      <select data-act="edges" aria-label="Edge look" title="Edge look">
+        <option value="">Theme default</option>
+        <option value="rounded">Rounded</option>
+        <option value="orthogonal">Orthogonal</option>
+        <option value="curved">Curved</option>
+        <option value="mermaid">Mermaid curves</option>
+      </select>
       <span class="zoomers">
         <button type="button" data-act="out" aria-label="Zoom out">−</button>
         <output aria-live="off">100%</output>
@@ -2253,7 +2813,7 @@ function ensureThemeAssets(name) {
 }
 
 class WermaidDiagram extends HTMLElement {
-  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'height', 'background'];
+  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'themes', 'height', 'background'];
 
   constructor() {
     super();
@@ -2261,10 +2821,22 @@ class WermaidDiagram extends HTMLElement {
     const $ = (sel) => this.shadowRoot.querySelector(sel);
     this.$ = { viewport: $('.viewport'), stage: $('.stage'), toolbar: $('.toolbar'), zoomers: $('.zoomers'),
       zoomOut: $('output'), exporter: $('.exporter'), copy: $('.copy'), download: $('.download'), downloads: $('.downloads'),
-      note: $('.note'), error: $('.error') };
+      note: $('.note'), error: $('.error'), undo: $('[data-act="undo"]'), redo: $('[data-act="redo"]'),
+      reset: $('[data-act="reset"]'), compare: $('[data-act="compare"]'), themePick: $('[data-act="theme"]'),
+      edgePick: $('[data-act="edges"]') };
     this._source = null;
-    this._text = '';
     this._diagram = null;
+    // Source bookkeeping: what the app supplied (reset goes back to it) and what is shown now
+    // (that plus any edits). A new source bumps _wanted; the next render loads it.
+    this._supplied = null;
+    this._current = null;
+    this._wanted = 1;
+    this._loaded = 0;
+    this._renderKey = null;
+    this._history = createHistory();
+    this._editor = null;
+    this._editorFor = null;
+    this._stock = false;
     this._view = { x: 0, y: 0, zoom: 1 };
     this._lastVB = null;
     this._rendered = Promise.resolve(null);
@@ -2275,7 +2847,9 @@ class WermaidDiagram extends HTMLElement {
 
   /** The Mermaid source (with or without a layout block). */
   get source() { return this._source ?? sourceOf(this); }
-  set source(text) { this._source = String(text); this._schedule(); }
+  set source(text) { this._source = String(text); this._newSource(); }
+  /** The source with its current layout block: the supplied source plus any edits. */
+  get editedSource() { return this._current ?? dedent(this.source); }
   /** The latest render result (see createWermaid().render), or null. */
   get diagram() { return this._diagram; }
   /** Promise for the latest render; resolves with the diagram, rejects on error. */
@@ -2305,7 +2879,7 @@ class WermaidDiagram extends HTMLElement {
     darkQuery?.addEventListener('change', this._onDark);
     if (!this._observer) {
       // Inline source edited after the fact (by a framework, say) re-renders.
-      this._observer = new MutationObserver(() => { if (this._source === null) this._schedule(); });
+      this._observer = new MutationObserver(() => { if (this._source === null) this._newSource(); });
     }
     this._observer.observe(this, { childList: true, characterData: true, subtree: true });
     if (!this._sizeObserver) {
@@ -2329,12 +2903,24 @@ class WermaidDiagram extends HTMLElement {
 
   attributeChangedCallback(name, oldValue, value) {
     if (oldValue === value) return;
-    if (['theme', 'dark', 'src'].includes(name)) this._schedule();
+    if (name === 'src') this._newSource();
+    else if (name === 'theme' || name === 'dark') this._schedule();
     else this._applyChrome();
   }
 
-  /** Re-render now. */
-  refresh() { this._schedule(); return this._rendered; }
+  /** A new source from the app: the next render loads it, dropping edits, history and selection. */
+  _newSource() {
+    this._wanted++;
+    this._editor?.select(null);
+    this._schedule();
+  }
+
+  /** Re-render now, re-reading the source unless it has been edited (edits are kept). */
+  refresh() {
+    if (this._current === this._supplied) this._wanted++;
+    this._schedule();
+    return this._rendered;
+  }
   /** Scale the drawing to the viewer and centre it (pannable viewers). */
   fit() { this._fit(); }
 
@@ -2388,32 +2974,43 @@ class WermaidDiagram extends HTMLElement {
     if (!engine) throw new Error('Call defineWermaidElement(mermaid) before using <wermaid-diagram>.');
     const { stage, error } = this.$;
     try {
-      let text = this.source;
-      const src = this.getAttribute('src');
-      if (src && this._source === null) {
-        const res = await fetch(src);
-        if (!res.ok) throw new Error(`Couldn't load ${src} (${res.status})`);
-        text = await res.text();
+      let text;
+      const wanted = this._wanted;
+      if (this._loaded !== wanted) {
+        // A new source from the app: load it, and start over from it.
+        text = this.source;
+        const src = this.getAttribute('src');
+        if (src && this._source === null) {
+          const res = await fetch(src);
+          if (!res.ok) throw new Error(`Couldn't load ${src} (${res.status})`);
+          text = await res.text();
+        }
+        text = dedent(text);
+        this._loaded = wanted;
+        this._supplied = this._current = text;
+        this._history.clear();
+        this._editor?.select(null);
+      } else {
+        text = this._current;
       }
-      text = dedent(text);
-      if (!text.trim()) { stage.replaceChildren(); return null; }
+      if (!text.trim()) {
+        stage.replaceChildren();
+        this._diagram = this._renderKey = this._editorFor = null;
+        this._editor?.attach(null);
+        return null;
+      }
       const block = parseSource(text);
-      const attr = this.getAttribute('theme');
-      // Which theme: the block's @theme, then the attribute, then the page default, then wermaid.
-      // The attribute and page default are only fallbacks, so a name the page hasn't defined
-      // falls through to the next level (with a warning from the engine).
-      const none = attr === 'none';
-      const fallbacks = none ? [] : [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean);
-      const usedTheme = [block.overrides.settings.theme, ...fallbacks].find((n) => getTheme(n)) ?? null;
-      const darkAttr = this.getAttribute('dark') ?? 'auto';
-      const dark = darkAttr === 'auto' ? !!darkQuery?.matches : darkAttr !== 'false';
+      const { used, fallbacks, none } = this._themeFor(block);
+      const dark = this._isDark();
       this.toggleAttribute('data-dark', dark);
-      this._text = text;
-      if (usedTheme) await ensureThemeAssets(usedTheme);
+      if (used) await ensureThemeAssets(used);
       const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark });
       this._diagram = diagram;
+      this._renderKey = renderKey(block, used, dark);
       error.hidden = true;
       this._lastVB = null;
+      this._syncEditor();
+      if (this._stock && !this._editor) diagram.showStock();
       this._applyChrome();
       if (this._pannable()) this._fit();
       this.dispatchEvent(new CustomEvent('wermaid:render', { detail: { diagram }, bubbles: true, composed: true }));
@@ -2426,14 +3023,204 @@ class WermaidDiagram extends HTMLElement {
     }
   }
 
+  /**
+   * Which theme a parsed source renders with: the block's @theme, then the attribute, then the
+   * page default, then wermaid. The attribute and page default are only fallbacks, so a name the
+   * page hasn't defined falls through to the next level (with a warning from the engine).
+   */
+  _themeFor(block) {
+    const attr = this.getAttribute('theme');
+    const none = attr === 'none';
+    const fallbacks = none ? [] : [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean);
+    const used = [block.overrides.settings.theme, ...fallbacks].find((n) => getTheme(n)) ?? null;
+    return { used, fallbacks, none };
+  }
+
+  _isDark() {
+    const darkAttr = this.getAttribute('dark') ?? 'auto';
+    return darkAttr === 'auto' ? !!darkQuery?.matches : darkAttr !== 'false';
+  }
+
+  /* ---------------- editing, history and pickers ---------------- */
+
+  /** Create the editor when `edit` is on (and remove it when off); attach it to the drawing. */
+  _syncEditor() {
+    const want = this.features.includes('edit');
+    if (want && !this._editor) {
+      const { stage } = this.$;
+      this._editor = createEditor(stage, {
+        // Drags snap to the 8-unit grid; arrow keys move by 1 (Shift: 10).
+        snap: () => stage.classList.contains('dragging'),
+        scale: () => this._diagram?.svg?.getScreenCTM()?.a || 1,
+        onPreview: () => this._sizeDrawing(),
+        onCommit: (overrides, reason) => {
+          this._sizeDrawing();
+          if (this._inSync()) this._record(writeSource(this._current, overrides, this._diagram.scene), reason);
+        },
+      });
+      this._editor.setStock(this._stock);
+      this._editorFor = null;
+    } else if (!want && this._editor) {
+      this._editor.destroy();
+      this._editor = null;
+    }
+    if (this._editor && this._diagram && this._editorFor !== this._diagram) {
+      this._editor.attach(this._diagram, this._diagram.overrides);
+      this._editorFor = this._diagram;
+    }
+    this.$.stage.classList.toggle('editable', !!(this._editor && this._diagram?.supported));
+    // Focusable while editing, so arrow keys and Ctrl/⌘ Z reach it (an author's tabindex is kept).
+    if (want && !this.hasAttribute('tabindex')) { this.setAttribute('tabindex', '0'); this._ownTabindex = true; }
+    else if (!want && this._ownTabindex) { this.removeAttribute('tabindex'); this._ownTabindex = false; }
+  }
+
+  /**
+   * The drawing shows the current text (not a stale one while a re-render is pending or after a
+   * failed one), so a change made on it can be written back into that text.
+   */
+  _inSync() {
+    if (!this._diagram || this._current === null) return false;
+    const block = parseSource(this._current);
+    return this._renderKey === renderKey(block, this._themeFor(block).used, this._isDark());
+  }
+
+  /** The overrides being shown (the editor's, which are the drawing's own once attached). */
+  _overrides() { return this._editor?.overrides ?? this._diagram?.overrides; }
+
+  /** Record a completed change: the text before it goes on the undo stack, then tell the app. */
+  _record(text, reason, { show = false } = {}) {
+    if (text === this._current) return;
+    this._history.push(this._current);
+    if (show) this._show(text); else this._current = text;
+    this._emitChange(reason);
+  }
+
+  /** Show a source text: re-apply its block to the current drawing, or re-render if it must. */
+  _show(text) {
+    this._current = text;
+    const d = this._diagram;
+    if (this._inSync()) {
+      const { overrides } = parseSource(text);
+      if (this._editor) { this._editor.attach(d, overrides); this._editorFor = d; }
+      else { d.setOverrides(overrides); if (this._stock) d.showStock(); }
+      this._sizeDrawing();
+    } else {
+      this._schedule();
+    }
+    this._updateEditChrome();
+  }
+
+  _emitChange(reason) {
+    this._updateEditChrome();
+    this.dispatchEvent(new CustomEvent('wermaid:change', { detail: { source: this._current, reason }, bubbles: true, composed: true }));
+  }
+
+  _undo() {
+    const text = this._history.undo(this._current);
+    if (text == null) return;
+    this._show(text);
+    this._emitChange('undo');
+  }
+
+  _redo() {
+    const text = this._history.redo(this._current);
+    if (text == null) return;
+    this._show(text);
+    this._emitChange('redo');
+  }
+
+  /** Back to the source as the app supplied it; the history starts over. */
+  _reset() {
+    if (this._supplied === null) return;
+    this._history.clear();
+    this._editor?.select(null);
+    if (this._current === this._supplied) { this._updateEditChrome(); return; }
+    this._show(this._supplied);
+    this._emitChange('reset');
+  }
+
+  /** Mermaid's own drawing (overrides kept, not drawn), or back to the edited one. */
+  _setStock(on) {
+    this._stock = on;
+    const d = this._diagram;
+    if (this._editor) this._editor.setStock(on);
+    else if (d) { if (on) d.showStock(); else d.setOverrides(d.overrides); }
+    this._sizeDrawing();
+    this._updateEditChrome();
+  }
+
+  /** A theme pick is written into the block as `%% @theme`, so it beats the attribute. */
+  _pickTheme(name) {
+    const d = this._diagram;
+    if (!this._inSync() || !getTheme(name)) { this._updateEditChrome(); return; }
+    const overrides = this._overrides();
+    overrides.settings.theme = name;
+    this._record(writeSource(this._current, overrides, d.scene), 'theme', { show: true });
+  }
+
+  /** An edge-look pick is written as `%% @edges`; "" (theme default) removes it. */
+  _pickEdges(style) {
+    const d = this._diagram;
+    if (!this._inSync()) { this._updateEditChrome(); return; }
+    const overrides = this._overrides();
+    if (style) overrides.settings.edges = { ...overrides.settings.edges, style };
+    else delete overrides.settings.edges;
+    if (this._editor) this._editor.apply();
+    else if (!this._stock) d.setOverrides(overrides);
+    this._sizeDrawing();
+    this._record(writeSource(this._current, overrides, d.scene), 'edges');
+  }
+
+  /** Undo/Redo availability, the pickers' values and the compare toggle. */
+  _updateEditChrome() {
+    const { undo, redo, compare, themePick, edgePick } = this.$;
+    undo.setAttribute('aria-disabled', String(!this._history.canUndo));
+    redo.setAttribute('aria-disabled', String(!this._history.canRedo));
+    compare.setAttribute('aria-pressed', String(this._stock));
+    // The theme the shown text renders with (already the new one while a pick re-renders).
+    themePick.value = (this._current !== null ? this._themeFor(parseSource(this._current)).used : this._diagram?.theme) ?? '';
+    edgePick.value = this._overrides()?.settings?.edges?.style ?? '';
+  }
+
+  /** The theme picker offers the `themes` attribute's names (registered ones), else every theme. */
+  _fillThemes() {
+    const { themePick } = this.$;
+    const attr = this.getAttribute('themes');
+    const list = (attr !== null ? names(attr) : listThemes().map((t) => t.name)).filter((n, i, all) => getTheme(n) && all.indexOf(n) === i);
+    const key = list.join(' ');
+    if (themePick.dataset.list === key) return;
+    themePick.dataset.list = key;
+    themePick.replaceChildren(...list.map((n) => new Option(getTheme(n).label || n, n)));
+  }
+
+  /** Keep the drawing's size in step with its frame after the overrides change. */
+  _sizeDrawing() {
+    const svg = this._diagram?.svg;
+    if (!svg) return;
+    if (this._pannable()) this._sizeSvg();
+    else svg.style.maxWidth = `${svg.viewBox.baseVal.width}px`;
+  }
+
+  /** Redraw the selection handles at the current zoom. */
+  _redrawOverlay() { if (this._editor) this._editor.select(this._editor.selection); }
+
   /* ---------------- chrome: toolbar, background, size ---------------- */
 
   _applyChrome() {
-    const { toolbar, zoomers, exporter, copy, download, downloads, viewport } = this.$;
+    const { toolbar, zoomers, exporter, copy, download, downloads, viewport, undo, redo, reset, compare, themePick, edgePick } = this.$;
     const pannable = this._pannable();
     const legacy = this._legacy();
     const features = this.features;
     const formats = this._formats();
+    this._syncEditor();
+    undo.hidden = redo.hidden = !features.includes('undo');
+    reset.hidden = !features.includes('reset');
+    compare.hidden = !features.includes('compare');
+    themePick.hidden = !features.includes('themes');
+    edgePick.hidden = !features.includes('edges');
+    if (this._stock && compare.hidden) this._setStock(false);
+    this._fillThemes();
+    this._updateEditChrome();
     viewport.classList.toggle('pan', pannable);
     zoomers.hidden = !(pannable && features.includes('zoom'));
     exporter.hidden = !legacy;
@@ -2446,7 +3233,8 @@ class WermaidDiagram extends HTMLElement {
     for (const item of downloads.querySelectorAll('[data-format]')) item.hidden = !formats.includes(item.dataset.format);
     // The classic toolbar stays on screen; the new one shows on hover and focus.
     toolbar.classList.toggle('always', legacy);
-    toolbar.hidden = [zoomers, exporter, copy, download, downloads].every((n) => n.hidden);
+    toolbar.hidden = [undo, redo, reset, compare, themePick, edgePick, zoomers, exporter, copy, download, downloads].every((n) => n.hidden);
+    viewport.classList.toggle('roomy', [undo, redo, reset, compare, themePick, edgePick].some((n) => !n.hidden));
     if (toolbar.hidden) this._menu(null);
     const h = this.getAttribute('height');
     if (h) this.style.setProperty('--wermaid-height', /^\d+(\.\d+)?$/.test(h) ? `${h}px` : h);
@@ -2502,6 +3290,7 @@ class WermaidDiagram extends HTMLElement {
     this._autoFit = true; // keep fitting on resize until the viewer pans or zooms
     this._lastVB = { x: vb.x, y: vb.y };
     this._sizeSvg();
+    this._redrawOverlay();
   }
 
   _zoomAt(z, ax, ay) {
@@ -2512,6 +3301,7 @@ class WermaidDiagram extends HTMLElement {
     v.y = ay - (ay - v.y) * (next / v.zoom);
     v.zoom = next;
     this._sizeSvg();
+    this._redrawOverlay();
   }
 
   /* ---------------- interaction ---------------- */
@@ -2521,20 +3311,29 @@ class WermaidDiagram extends HTMLElement {
     const pannable = () => this._pannable() && this._diagram;
 
     toolbar.addEventListener('click', (ev) => {
-      const act = ev.target.closest('[data-act]')?.dataset.act;
-      if (!act) return;
+      const button = ev.target.closest('button[data-act]');
+      if (!button) return;
+      const act = button.dataset.act;
       const W = viewport.clientWidth, H = viewport.clientHeight;
       if (act === 'in') this._zoomAt(this._view.zoom * 1.25, W / 2, H / 2);
       else if (act === 'out') this._zoomAt(this._view.zoom / 1.25, W / 2, H / 2);
       else if (act === 'fit') this._fit();
+      else if (act === 'undo') this._undo();
+      else if (act === 'redo') this._redo();
+      else if (act === 'reset') this._reset();
+      else if (act === 'compare') this._setStock(!this._stock);
       else if (act === 'menu' || act === 'dlmenu') {
-        const menu = ev.target.closest('[data-act]').nextElementSibling;
+        const menu = button.nextElementSibling;
         this._menu(menu.hidden ? menu : null);
       } else {
-        const format = ev.target.closest('[data-act]').dataset.format;
         this._menu(null);
-        this._export(act === 'download' ? `save-${format}` : act);
+        this._export(act === 'download' ? `save-${button.dataset.format}` : act);
       }
+    });
+    toolbar.addEventListener('change', (ev) => {
+      const act = ev.target.dataset.act;
+      if (act === 'theme') this._pickTheme(ev.target.value);
+      else if (act === 'edges') this._pickEdges(ev.target.value);
     });
     toolbar.addEventListener('pointerdown', (ev) => ev.stopPropagation());
     toolbar.addEventListener('keydown', (ev) => {
@@ -2542,6 +3341,33 @@ class WermaidDiagram extends HTMLElement {
     });
     this.addEventListener('focusout', (ev) => {
       if (this._openMenu && !this.shadowRoot.contains(ev.relatedTarget)) this._menu(null);
+    });
+
+    // Keys reach the element only while focus is inside it. Pickers and menus keep their own keys.
+    this.addEventListener('keydown', (ev) => {
+      if (ev.composedPath()[0]?.closest?.('select, input, textarea, .menu')) return;
+      const mod = ev.ctrlKey || ev.metaKey;
+      const key = ev.key.toLowerCase();
+      if (mod && !ev.altKey && (key === 'z' || key === 'y')) {
+        if (!this.features.includes('undo')) return;
+        ev.preventDefault();
+        if (key === 'y' || ev.shiftKey) this._redo(); else this._undo();
+        return;
+      }
+      if (!mod && !ev.altKey) this._editor?.handleKey(ev);
+    });
+
+    // Editing: a press on a shape is the editor's (it calls preventDefault); it also focuses the
+    // element so keys apply here. A plain click on the background clears the selection.
+    let press = null;
+    viewport.addEventListener('pointerdown', (ev) => {
+      if (!this._editor) return;
+      this.focus({ preventScroll: true });
+      press = !ev.defaultPrevented && ev.button === 0 ? { id: ev.pointerId, x: ev.clientX, y: ev.clientY } : null;
+    });
+    viewport.addEventListener('pointerup', (ev) => {
+      if (press && ev.pointerId === press.id && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) < 3) this._editor?.select(null);
+      press = null;
     });
 
     // Ctrl/⌘ + scroll or a trackpad pinch zooms at the pointer; plain scrolling scrolls the page.
@@ -2553,12 +3379,15 @@ class WermaidDiagram extends HTMLElement {
       this._zoomAt(this._view.zoom * Math.exp(-ev.deltaY * unit * 0.01), ev.clientX - r.left, ev.clientY - r.top);
     }, { passive: false });
 
-    viewport.addEventListener('dblclick', (ev) => { if (pannable() && !ev.target.closest('.toolbar')) this._fit(); });
+    // Double-click fits, except on what the editor handles (a double press on a bend removes it).
+    const editable = '.toolbar, g.node, g.cluster, g.edgeLabel, .wm-overlay, .wm-hit';
+    viewport.addEventListener('dblclick', (ev) => { if (pannable() && !ev.target.closest(this._editor ? editable : '.toolbar')) this._fit(); });
 
     const touches = new Map();
     let pan = null, pinch = null;
     viewport.addEventListener('pointerdown', (ev) => {
-      if (!pannable() || (ev.button !== 0 && ev.button !== 1)) return;
+      // A press the editor took (on a shape or handle) isn't a pan.
+      if (!pannable() || ev.defaultPrevented || (ev.button !== 0 && ev.button !== 1)) return;
       if (ev.pointerType === 'touch') {
         touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
         if (touches.size === 2) {
@@ -2585,6 +3414,7 @@ class WermaidDiagram extends HTMLElement {
           this._autoFit = false;
           this._view = { zoom: z, x: mid.x - (pinch.mid.x - pinch.view.x) * (z / pinch.view.zoom), y: mid.y - (pinch.mid.y - pinch.view.y) * (z / pinch.view.zoom) };
           this._sizeSvg();
+          this._redrawOverlay();
           return;
         }
       }
@@ -2645,7 +3475,7 @@ class WermaidDiagram extends HTMLElement {
         await navigator.clipboard.writeText(d.toSVG());
         this._note('SVG copied');
       } else if (kind === 'save-md') {
-        await this._save(`${name}.md`, new Blob([`\`\`\`mermaid\n${this._text.trim()}\n\`\`\`\n`], { type: 'text/markdown' }));
+        await this._save(`${name}.md`, new Blob([`\`\`\`mermaid\n${this.editedSource.trim()}\n\`\`\`\n`], { type: 'text/markdown' }));
       } else if (kind === 'save-png') {
         await this._save(`${name}.png`, await d.toPNG({ background }));
       } else if (kind === 'save-svg') {
@@ -2677,6 +3507,11 @@ class WermaidDiagram extends HTMLElement {
 
 const FEATURES = ['copy', 'download', 'edit', 'undo', 'reset', 'themes', 'edges', 'zoom', 'compare'];
 const FORMATS = ['png', 'svg', 'md'];
+
+/** What a render depends on besides the block: the body, the theme it resolves to, dark or light. */
+function renderKey(block, theme, dark) {
+  return `${block.body}\u0000${theme}\u0000${dark}`;
+}
 
 /** A list given as an array or as space-separated words; "none" is the empty list. */
 function names(value) {

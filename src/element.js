@@ -28,12 +28,25 @@
  *   background palette | none | <css colour>     (default none; palette when pannable)
  *   src        URL of a .mmd / text file to load instead of the element's text
  *
- * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}}.
+ *   themes     space-separated theme names the theme picker offers (registered ones only;
+ *              default: every registered theme)
+ *
+ * Editing (`edit`) works as in the full editor: drag shapes, Alt-drag to pin, resize from corners,
+ * drag lines to bend them, arrow keys to nudge (Shift for 10), Delete to reset the selection. The
+ * element is focusable then, and keys act only while focus is inside it. Ctrl/⌘ Z undoes,
+ * Shift+Ctrl/⌘ Z (or Ctrl/⌘ Y) redoes. A theme or edge-look pick is written into the diagram's
+ * block as `%% @theme` / `%% @edges`, so it travels with the source.
+ *
+ * Events (bubble, composed): `wermaid:render` {detail: {diagram}}, `wermaid:error` {detail: {error}},
+ * `wermaid:change` {detail: {source, reason}} once per completed change, where reason is one of
+ * drag key reset undo redo pin style theme edges, and source is the full text with its block.
  * Property `rendered` is a promise for the latest render; `diagram` is the latest result;
- * `features` is the resolved list of features (set it with an array or a space-separated string).
+ * `features` is the resolved list of features (set it with an array or a space-separated string);
+ * `editedSource` is the source with the current block (the supplied source plus any edits).
  */
 
-import { createWermaid, parseSource, DEFAULT_THEME, clampView, defineTheme, listThemes, getTheme } from './wermaid.js';
+import { createWermaid, parseSource, writeSource, DEFAULT_THEME, clampView, defineTheme, listThemes, getTheme } from './wermaid.js';
+import { createEditor, createHistory } from './edit.js';
 
 export { defineTheme, listThemes };
 
@@ -104,9 +117,13 @@ const STYLE = `
   :host { display: block; position: relative; --wermaid-height: 420px;
     --wermaid-ui-bg: #F9F9F7; --wermaid-ui-fg: #1E1F22; --wermaid-ui-muted: #696A6F; --wermaid-ui-line: #BDBDC1; }
   :host([data-dark]) { --wermaid-ui-bg: #151516; --wermaid-ui-fg: #E7E7E3; --wermaid-ui-muted: #9B9CA0; --wermaid-ui-line: #3A3A3F; }
+  :host(:focus) { outline: none; }
+  :host(:focus-visible) { outline: 2px solid var(--wermaid-ui-fg); outline-offset: 2px; }
   [hidden] { display: none !important; }
   .viewport { position: relative; background: var(--wermaid-bg, transparent); }
   .stage svg { display: block; margin-inline: auto; }
+  /* Inline diagrams with editing controls keep a row clear for the toolbar, so it never covers shapes. */
+  .viewport.roomy:not(.pan) { padding-top: 40px; }
   .viewport.pan { height: var(--wermaid-height); overflow: hidden; cursor: grab; touch-action: none; }
   .viewport.pan .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
   .viewport.pan .stage svg { margin: 0; max-width: none !important; }
@@ -119,8 +136,14 @@ const STYLE = `
   .toolbar button { border: 0; background: none; color: inherit; font: inherit; padding: 4px 7px; cursor: pointer; }
   .toolbar button:hover, .toolbar button:focus-visible { background: var(--wermaid-ui-line); outline: none; }
   .toolbar button:focus-visible { box-shadow: inset 0 0 0 2px var(--wermaid-ui-fg); }
+  .toolbar select { border: 0; background: none; color: inherit; font: inherit; padding: 4px 2px; cursor: pointer; max-width: 16ch; }
+  .toolbar select:hover, .toolbar select:focus-visible { background: var(--wermaid-ui-line); outline: none; }
+  .toolbar select:focus-visible { box-shadow: inset 0 0 0 2px var(--wermaid-ui-fg); }
+  .toolbar option { background: var(--wermaid-ui-bg); color: var(--wermaid-ui-fg); }
+  .toolbar [aria-disabled="true"] { color: var(--wermaid-ui-muted); cursor: default; }
+  .toolbar [aria-pressed="true"] { background: var(--wermaid-ui-fg); color: var(--wermaid-ui-bg); }
   .toolbar { opacity: 0; }
-  :host(:hover) .toolbar, .toolbar:focus-within, .toolbar.always { opacity: 1; }
+  :host(:hover) .toolbar, :host(:focus-visible) .toolbar, .toolbar:focus-within, .toolbar.always { opacity: 1; }
   @media (hover: none) { .toolbar { opacity: 1; } }
   [aria-haspopup]::after { content: " ▾"; }
   .toolbar output { min-width: 4.5ch; text-align: center; color: var(--wermaid-ui-muted); font-variant-numeric: tabular-nums; }
@@ -131,6 +154,23 @@ const STYLE = `
   .menu button { text-align: left; padding: 7px 12px; }
   .note { position: absolute; left: 8px; bottom: 8px; z-index: 2; margin: 0; padding: 4px 8px; font: 12px/1.4 ui-monospace, Menlo, monospace;
     background: var(--wermaid-ui-bg); color: var(--wermaid-ui-fg); border: 1px solid var(--wermaid-ui-line); }
+  /* Editing: the overlay and hit areas drawn by edit.js. */
+  .stage.editable { user-select: none; -webkit-user-select: none; }
+  .stage.editable svg { overflow: visible; }
+  .stage.editable svg g.node, .stage.editable svg g.edgeLabel,
+  .stage.editable svg g.cluster > rect, .stage.editable svg .statediagram-cluster rect { cursor: move; }
+  .stage.dragging, .stage.dragging * { cursor: grabbing !important; }
+  .stage.editable svg g.node, .stage.editable svg g.edgeLabel, .wm-hit, .wm-overlay .h { touch-action: none; }
+  .wm-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: crosshair; }
+  .wm-overlay .sel { fill: none; stroke: var(--wermaid-ui-fg); stroke-width: 1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .edge-sel { fill: none; stroke: var(--wermaid-ui-fg); stroke-width: 5px; opacity: 0.12; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .wm-overlay .h { fill: var(--wermaid-ui-bg); stroke: var(--wermaid-ui-fg); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .wm-overlay .h.corner { cursor: nwse-resize; }
+  .wm-overlay .h.corner.ne, .wm-overlay .h.corner.sw { cursor: nesw-resize; }
+  .wm-overlay .h.via { fill: var(--wermaid-ui-fg); cursor: move; }
+  .wm-overlay .h.add { cursor: copy; }
+  .wm-overlay .pin { fill: var(--wermaid-ui-fg); pointer-events: none; }
+  .wm-overlay .pin.hollow { fill: var(--wermaid-ui-bg); stroke: var(--wermaid-ui-fg); stroke-width: 1px; vector-effect: non-scaling-stroke; }
   .error { margin: 0; padding: 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #9a4d07; white-space: pre-wrap; }
 `;
 
@@ -139,6 +179,18 @@ const TEMPLATE = `
   <div class="viewport" part="viewport">
     <div class="stage" part="stage"></div>
     <div class="toolbar" part="toolbar" role="toolbar" aria-label="Diagram tools" hidden>
+      <button type="button" data-act="undo" aria-label="Undo" aria-disabled="true">Undo</button>
+      <button type="button" data-act="redo" aria-label="Redo" aria-disabled="true">Redo</button>
+      <button type="button" data-act="reset" aria-label="Reset to the diagram as it arrived">Reset</button>
+      <button type="button" data-act="compare" aria-pressed="false" aria-label="Show Mermaid’s own layout">Mermaid’s layout</button>
+      <select data-act="theme" aria-label="Theme" title="Theme"></select>
+      <select data-act="edges" aria-label="Edge look" title="Edge look">
+        <option value="">Theme default</option>
+        <option value="rounded">Rounded</option>
+        <option value="orthogonal">Orthogonal</option>
+        <option value="curved">Curved</option>
+        <option value="mermaid">Mermaid curves</option>
+      </select>
       <span class="zoomers">
         <button type="button" data-act="out" aria-label="Zoom out">−</button>
         <output aria-live="off">100%</output>
@@ -203,7 +255,7 @@ function ensureThemeAssets(name) {
 }
 
 export class WermaidDiagram extends HTMLElement {
-  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'height', 'background'];
+  static observedAttributes = ['theme', 'dark', 'src', 'pannable', 'controls', 'features', 'formats', 'themes', 'height', 'background'];
 
   constructor() {
     super();
@@ -211,10 +263,22 @@ export class WermaidDiagram extends HTMLElement {
     const $ = (sel) => this.shadowRoot.querySelector(sel);
     this.$ = { viewport: $('.viewport'), stage: $('.stage'), toolbar: $('.toolbar'), zoomers: $('.zoomers'),
       zoomOut: $('output'), exporter: $('.exporter'), copy: $('.copy'), download: $('.download'), downloads: $('.downloads'),
-      note: $('.note'), error: $('.error') };
+      note: $('.note'), error: $('.error'), undo: $('[data-act="undo"]'), redo: $('[data-act="redo"]'),
+      reset: $('[data-act="reset"]'), compare: $('[data-act="compare"]'), themePick: $('[data-act="theme"]'),
+      edgePick: $('[data-act="edges"]') };
     this._source = null;
-    this._text = '';
     this._diagram = null;
+    // Source bookkeeping: what the app supplied (reset goes back to it) and what is shown now
+    // (that plus any edits). A new source bumps _wanted; the next render loads it.
+    this._supplied = null;
+    this._current = null;
+    this._wanted = 1;
+    this._loaded = 0;
+    this._renderKey = null;
+    this._history = createHistory();
+    this._editor = null;
+    this._editorFor = null;
+    this._stock = false;
     this._view = { x: 0, y: 0, zoom: 1 };
     this._lastVB = null;
     this._rendered = Promise.resolve(null);
@@ -225,7 +289,9 @@ export class WermaidDiagram extends HTMLElement {
 
   /** The Mermaid source (with or without a layout block). */
   get source() { return this._source ?? sourceOf(this); }
-  set source(text) { this._source = String(text); this._schedule(); }
+  set source(text) { this._source = String(text); this._newSource(); }
+  /** The source with its current layout block: the supplied source plus any edits. */
+  get editedSource() { return this._current ?? dedent(this.source); }
   /** The latest render result (see createWermaid().render), or null. */
   get diagram() { return this._diagram; }
   /** Promise for the latest render; resolves with the diagram, rejects on error. */
@@ -255,7 +321,7 @@ export class WermaidDiagram extends HTMLElement {
     darkQuery?.addEventListener('change', this._onDark);
     if (!this._observer) {
       // Inline source edited after the fact (by a framework, say) re-renders.
-      this._observer = new MutationObserver(() => { if (this._source === null) this._schedule(); });
+      this._observer = new MutationObserver(() => { if (this._source === null) this._newSource(); });
     }
     this._observer.observe(this, { childList: true, characterData: true, subtree: true });
     if (!this._sizeObserver) {
@@ -279,12 +345,24 @@ export class WermaidDiagram extends HTMLElement {
 
   attributeChangedCallback(name, oldValue, value) {
     if (oldValue === value) return;
-    if (['theme', 'dark', 'src'].includes(name)) this._schedule();
+    if (name === 'src') this._newSource();
+    else if (name === 'theme' || name === 'dark') this._schedule();
     else this._applyChrome();
   }
 
-  /** Re-render now. */
-  refresh() { this._schedule(); return this._rendered; }
+  /** A new source from the app: the next render loads it, dropping edits, history and selection. */
+  _newSource() {
+    this._wanted++;
+    this._editor?.select(null);
+    this._schedule();
+  }
+
+  /** Re-render now, re-reading the source unless it has been edited (edits are kept). */
+  refresh() {
+    if (this._current === this._supplied) this._wanted++;
+    this._schedule();
+    return this._rendered;
+  }
   /** Scale the drawing to the viewer and centre it (pannable viewers). */
   fit() { this._fit(); }
 
@@ -338,32 +416,43 @@ export class WermaidDiagram extends HTMLElement {
     if (!engine) throw new Error('Call defineWermaidElement(mermaid) before using <wermaid-diagram>.');
     const { stage, error } = this.$;
     try {
-      let text = this.source;
-      const src = this.getAttribute('src');
-      if (src && this._source === null) {
-        const res = await fetch(src);
-        if (!res.ok) throw new Error(`Couldn't load ${src} (${res.status})`);
-        text = await res.text();
+      let text;
+      const wanted = this._wanted;
+      if (this._loaded !== wanted) {
+        // A new source from the app: load it, and start over from it.
+        text = this.source;
+        const src = this.getAttribute('src');
+        if (src && this._source === null) {
+          const res = await fetch(src);
+          if (!res.ok) throw new Error(`Couldn't load ${src} (${res.status})`);
+          text = await res.text();
+        }
+        text = dedent(text);
+        this._loaded = wanted;
+        this._supplied = this._current = text;
+        this._history.clear();
+        this._editor?.select(null);
+      } else {
+        text = this._current;
       }
-      text = dedent(text);
-      if (!text.trim()) { stage.replaceChildren(); return null; }
+      if (!text.trim()) {
+        stage.replaceChildren();
+        this._diagram = this._renderKey = this._editorFor = null;
+        this._editor?.attach(null);
+        return null;
+      }
       const block = parseSource(text);
-      const attr = this.getAttribute('theme');
-      // Which theme: the block's @theme, then the attribute, then the page default, then wermaid.
-      // The attribute and page default are only fallbacks, so a name the page hasn't defined
-      // falls through to the next level (with a warning from the engine).
-      const none = attr === 'none';
-      const fallbacks = none ? [] : [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean);
-      const usedTheme = [block.overrides.settings.theme, ...fallbacks].find((n) => getTheme(n)) ?? null;
-      const darkAttr = this.getAttribute('dark') ?? 'auto';
-      const dark = darkAttr === 'auto' ? !!darkQuery?.matches : darkAttr !== 'false';
+      const { used, fallbacks, none } = this._themeFor(block);
+      const dark = this._isDark();
       this.toggleAttribute('data-dark', dark);
-      this._text = text;
-      if (usedTheme) await ensureThemeAssets(usedTheme);
+      if (used) await ensureThemeAssets(used);
       const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark });
       this._diagram = diagram;
+      this._renderKey = renderKey(block, used, dark);
       error.hidden = true;
       this._lastVB = null;
+      this._syncEditor();
+      if (this._stock && !this._editor) diagram.showStock();
       this._applyChrome();
       if (this._pannable()) this._fit();
       this.dispatchEvent(new CustomEvent('wermaid:render', { detail: { diagram }, bubbles: true, composed: true }));
@@ -376,14 +465,204 @@ export class WermaidDiagram extends HTMLElement {
     }
   }
 
+  /**
+   * Which theme a parsed source renders with: the block's @theme, then the attribute, then the
+   * page default, then wermaid. The attribute and page default are only fallbacks, so a name the
+   * page hasn't defined falls through to the next level (with a warning from the engine).
+   */
+  _themeFor(block) {
+    const attr = this.getAttribute('theme');
+    const none = attr === 'none';
+    const fallbacks = none ? [] : [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean);
+    const used = [block.overrides.settings.theme, ...fallbacks].find((n) => getTheme(n)) ?? null;
+    return { used, fallbacks, none };
+  }
+
+  _isDark() {
+    const darkAttr = this.getAttribute('dark') ?? 'auto';
+    return darkAttr === 'auto' ? !!darkQuery?.matches : darkAttr !== 'false';
+  }
+
+  /* ---------------- editing, history and pickers ---------------- */
+
+  /** Create the editor when `edit` is on (and remove it when off); attach it to the drawing. */
+  _syncEditor() {
+    const want = this.features.includes('edit');
+    if (want && !this._editor) {
+      const { stage } = this.$;
+      this._editor = createEditor(stage, {
+        // Drags snap to the 8-unit grid; arrow keys move by 1 (Shift: 10).
+        snap: () => stage.classList.contains('dragging'),
+        scale: () => this._diagram?.svg?.getScreenCTM()?.a || 1,
+        onPreview: () => this._sizeDrawing(),
+        onCommit: (overrides, reason) => {
+          this._sizeDrawing();
+          if (this._inSync()) this._record(writeSource(this._current, overrides, this._diagram.scene), reason);
+        },
+      });
+      this._editor.setStock(this._stock);
+      this._editorFor = null;
+    } else if (!want && this._editor) {
+      this._editor.destroy();
+      this._editor = null;
+    }
+    if (this._editor && this._diagram && this._editorFor !== this._diagram) {
+      this._editor.attach(this._diagram, this._diagram.overrides);
+      this._editorFor = this._diagram;
+    }
+    this.$.stage.classList.toggle('editable', !!(this._editor && this._diagram?.supported));
+    // Focusable while editing, so arrow keys and Ctrl/⌘ Z reach it (an author's tabindex is kept).
+    if (want && !this.hasAttribute('tabindex')) { this.setAttribute('tabindex', '0'); this._ownTabindex = true; }
+    else if (!want && this._ownTabindex) { this.removeAttribute('tabindex'); this._ownTabindex = false; }
+  }
+
+  /**
+   * The drawing shows the current text (not a stale one while a re-render is pending or after a
+   * failed one), so a change made on it can be written back into that text.
+   */
+  _inSync() {
+    if (!this._diagram || this._current === null) return false;
+    const block = parseSource(this._current);
+    return this._renderKey === renderKey(block, this._themeFor(block).used, this._isDark());
+  }
+
+  /** The overrides being shown (the editor's, which are the drawing's own once attached). */
+  _overrides() { return this._editor?.overrides ?? this._diagram?.overrides; }
+
+  /** Record a completed change: the text before it goes on the undo stack, then tell the app. */
+  _record(text, reason, { show = false } = {}) {
+    if (text === this._current) return;
+    this._history.push(this._current);
+    if (show) this._show(text); else this._current = text;
+    this._emitChange(reason);
+  }
+
+  /** Show a source text: re-apply its block to the current drawing, or re-render if it must. */
+  _show(text) {
+    this._current = text;
+    const d = this._diagram;
+    if (this._inSync()) {
+      const { overrides } = parseSource(text);
+      if (this._editor) { this._editor.attach(d, overrides); this._editorFor = d; }
+      else { d.setOverrides(overrides); if (this._stock) d.showStock(); }
+      this._sizeDrawing();
+    } else {
+      this._schedule();
+    }
+    this._updateEditChrome();
+  }
+
+  _emitChange(reason) {
+    this._updateEditChrome();
+    this.dispatchEvent(new CustomEvent('wermaid:change', { detail: { source: this._current, reason }, bubbles: true, composed: true }));
+  }
+
+  _undo() {
+    const text = this._history.undo(this._current);
+    if (text == null) return;
+    this._show(text);
+    this._emitChange('undo');
+  }
+
+  _redo() {
+    const text = this._history.redo(this._current);
+    if (text == null) return;
+    this._show(text);
+    this._emitChange('redo');
+  }
+
+  /** Back to the source as the app supplied it; the history starts over. */
+  _reset() {
+    if (this._supplied === null) return;
+    this._history.clear();
+    this._editor?.select(null);
+    if (this._current === this._supplied) { this._updateEditChrome(); return; }
+    this._show(this._supplied);
+    this._emitChange('reset');
+  }
+
+  /** Mermaid's own drawing (overrides kept, not drawn), or back to the edited one. */
+  _setStock(on) {
+    this._stock = on;
+    const d = this._diagram;
+    if (this._editor) this._editor.setStock(on);
+    else if (d) { if (on) d.showStock(); else d.setOverrides(d.overrides); }
+    this._sizeDrawing();
+    this._updateEditChrome();
+  }
+
+  /** A theme pick is written into the block as `%% @theme`, so it beats the attribute. */
+  _pickTheme(name) {
+    const d = this._diagram;
+    if (!this._inSync() || !getTheme(name)) { this._updateEditChrome(); return; }
+    const overrides = this._overrides();
+    overrides.settings.theme = name;
+    this._record(writeSource(this._current, overrides, d.scene), 'theme', { show: true });
+  }
+
+  /** An edge-look pick is written as `%% @edges`; "" (theme default) removes it. */
+  _pickEdges(style) {
+    const d = this._diagram;
+    if (!this._inSync()) { this._updateEditChrome(); return; }
+    const overrides = this._overrides();
+    if (style) overrides.settings.edges = { ...overrides.settings.edges, style };
+    else delete overrides.settings.edges;
+    if (this._editor) this._editor.apply();
+    else if (!this._stock) d.setOverrides(overrides);
+    this._sizeDrawing();
+    this._record(writeSource(this._current, overrides, d.scene), 'edges');
+  }
+
+  /** Undo/Redo availability, the pickers' values and the compare toggle. */
+  _updateEditChrome() {
+    const { undo, redo, compare, themePick, edgePick } = this.$;
+    undo.setAttribute('aria-disabled', String(!this._history.canUndo));
+    redo.setAttribute('aria-disabled', String(!this._history.canRedo));
+    compare.setAttribute('aria-pressed', String(this._stock));
+    // The theme the shown text renders with (already the new one while a pick re-renders).
+    themePick.value = (this._current !== null ? this._themeFor(parseSource(this._current)).used : this._diagram?.theme) ?? '';
+    edgePick.value = this._overrides()?.settings?.edges?.style ?? '';
+  }
+
+  /** The theme picker offers the `themes` attribute's names (registered ones), else every theme. */
+  _fillThemes() {
+    const { themePick } = this.$;
+    const attr = this.getAttribute('themes');
+    const list = (attr !== null ? names(attr) : listThemes().map((t) => t.name)).filter((n, i, all) => getTheme(n) && all.indexOf(n) === i);
+    const key = list.join(' ');
+    if (themePick.dataset.list === key) return;
+    themePick.dataset.list = key;
+    themePick.replaceChildren(...list.map((n) => new Option(getTheme(n).label || n, n)));
+  }
+
+  /** Keep the drawing's size in step with its frame after the overrides change. */
+  _sizeDrawing() {
+    const svg = this._diagram?.svg;
+    if (!svg) return;
+    if (this._pannable()) this._sizeSvg();
+    else svg.style.maxWidth = `${svg.viewBox.baseVal.width}px`;
+  }
+
+  /** Redraw the selection handles at the current zoom. */
+  _redrawOverlay() { if (this._editor) this._editor.select(this._editor.selection); }
+
   /* ---------------- chrome: toolbar, background, size ---------------- */
 
   _applyChrome() {
-    const { toolbar, zoomers, exporter, copy, download, downloads, viewport } = this.$;
+    const { toolbar, zoomers, exporter, copy, download, downloads, viewport, undo, redo, reset, compare, themePick, edgePick } = this.$;
     const pannable = this._pannable();
     const legacy = this._legacy();
     const features = this.features;
     const formats = this._formats();
+    this._syncEditor();
+    undo.hidden = redo.hidden = !features.includes('undo');
+    reset.hidden = !features.includes('reset');
+    compare.hidden = !features.includes('compare');
+    themePick.hidden = !features.includes('themes');
+    edgePick.hidden = !features.includes('edges');
+    if (this._stock && compare.hidden) this._setStock(false);
+    this._fillThemes();
+    this._updateEditChrome();
     viewport.classList.toggle('pan', pannable);
     zoomers.hidden = !(pannable && features.includes('zoom'));
     exporter.hidden = !legacy;
@@ -396,7 +675,8 @@ export class WermaidDiagram extends HTMLElement {
     for (const item of downloads.querySelectorAll('[data-format]')) item.hidden = !formats.includes(item.dataset.format);
     // The classic toolbar stays on screen; the new one shows on hover and focus.
     toolbar.classList.toggle('always', legacy);
-    toolbar.hidden = [zoomers, exporter, copy, download, downloads].every((n) => n.hidden);
+    toolbar.hidden = [undo, redo, reset, compare, themePick, edgePick, zoomers, exporter, copy, download, downloads].every((n) => n.hidden);
+    viewport.classList.toggle('roomy', [undo, redo, reset, compare, themePick, edgePick].some((n) => !n.hidden));
     if (toolbar.hidden) this._menu(null);
     const h = this.getAttribute('height');
     if (h) this.style.setProperty('--wermaid-height', /^\d+(\.\d+)?$/.test(h) ? `${h}px` : h);
@@ -452,6 +732,7 @@ export class WermaidDiagram extends HTMLElement {
     this._autoFit = true; // keep fitting on resize until the viewer pans or zooms
     this._lastVB = { x: vb.x, y: vb.y };
     this._sizeSvg();
+    this._redrawOverlay();
   }
 
   _zoomAt(z, ax, ay) {
@@ -462,6 +743,7 @@ export class WermaidDiagram extends HTMLElement {
     v.y = ay - (ay - v.y) * (next / v.zoom);
     v.zoom = next;
     this._sizeSvg();
+    this._redrawOverlay();
   }
 
   /* ---------------- interaction ---------------- */
@@ -471,20 +753,29 @@ export class WermaidDiagram extends HTMLElement {
     const pannable = () => this._pannable() && this._diagram;
 
     toolbar.addEventListener('click', (ev) => {
-      const act = ev.target.closest('[data-act]')?.dataset.act;
-      if (!act) return;
+      const button = ev.target.closest('button[data-act]');
+      if (!button) return;
+      const act = button.dataset.act;
       const W = viewport.clientWidth, H = viewport.clientHeight;
       if (act === 'in') this._zoomAt(this._view.zoom * 1.25, W / 2, H / 2);
       else if (act === 'out') this._zoomAt(this._view.zoom / 1.25, W / 2, H / 2);
       else if (act === 'fit') this._fit();
+      else if (act === 'undo') this._undo();
+      else if (act === 'redo') this._redo();
+      else if (act === 'reset') this._reset();
+      else if (act === 'compare') this._setStock(!this._stock);
       else if (act === 'menu' || act === 'dlmenu') {
-        const menu = ev.target.closest('[data-act]').nextElementSibling;
+        const menu = button.nextElementSibling;
         this._menu(menu.hidden ? menu : null);
       } else {
-        const format = ev.target.closest('[data-act]').dataset.format;
         this._menu(null);
-        this._export(act === 'download' ? `save-${format}` : act);
+        this._export(act === 'download' ? `save-${button.dataset.format}` : act);
       }
+    });
+    toolbar.addEventListener('change', (ev) => {
+      const act = ev.target.dataset.act;
+      if (act === 'theme') this._pickTheme(ev.target.value);
+      else if (act === 'edges') this._pickEdges(ev.target.value);
     });
     toolbar.addEventListener('pointerdown', (ev) => ev.stopPropagation());
     toolbar.addEventListener('keydown', (ev) => {
@@ -492,6 +783,33 @@ export class WermaidDiagram extends HTMLElement {
     });
     this.addEventListener('focusout', (ev) => {
       if (this._openMenu && !this.shadowRoot.contains(ev.relatedTarget)) this._menu(null);
+    });
+
+    // Keys reach the element only while focus is inside it. Pickers and menus keep their own keys.
+    this.addEventListener('keydown', (ev) => {
+      if (ev.composedPath()[0]?.closest?.('select, input, textarea, .menu')) return;
+      const mod = ev.ctrlKey || ev.metaKey;
+      const key = ev.key.toLowerCase();
+      if (mod && !ev.altKey && (key === 'z' || key === 'y')) {
+        if (!this.features.includes('undo')) return;
+        ev.preventDefault();
+        if (key === 'y' || ev.shiftKey) this._redo(); else this._undo();
+        return;
+      }
+      if (!mod && !ev.altKey) this._editor?.handleKey(ev);
+    });
+
+    // Editing: a press on a shape is the editor's (it calls preventDefault); it also focuses the
+    // element so keys apply here. A plain click on the background clears the selection.
+    let press = null;
+    viewport.addEventListener('pointerdown', (ev) => {
+      if (!this._editor) return;
+      this.focus({ preventScroll: true });
+      press = !ev.defaultPrevented && ev.button === 0 ? { id: ev.pointerId, x: ev.clientX, y: ev.clientY } : null;
+    });
+    viewport.addEventListener('pointerup', (ev) => {
+      if (press && ev.pointerId === press.id && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) < 3) this._editor?.select(null);
+      press = null;
     });
 
     // Ctrl/⌘ + scroll or a trackpad pinch zooms at the pointer; plain scrolling scrolls the page.
@@ -503,12 +821,15 @@ export class WermaidDiagram extends HTMLElement {
       this._zoomAt(this._view.zoom * Math.exp(-ev.deltaY * unit * 0.01), ev.clientX - r.left, ev.clientY - r.top);
     }, { passive: false });
 
-    viewport.addEventListener('dblclick', (ev) => { if (pannable() && !ev.target.closest('.toolbar')) this._fit(); });
+    // Double-click fits, except on what the editor handles (a double press on a bend removes it).
+    const editable = '.toolbar, g.node, g.cluster, g.edgeLabel, .wm-overlay, .wm-hit';
+    viewport.addEventListener('dblclick', (ev) => { if (pannable() && !ev.target.closest(this._editor ? editable : '.toolbar')) this._fit(); });
 
     const touches = new Map();
     let pan = null, pinch = null;
     viewport.addEventListener('pointerdown', (ev) => {
-      if (!pannable() || (ev.button !== 0 && ev.button !== 1)) return;
+      // A press the editor took (on a shape or handle) isn't a pan.
+      if (!pannable() || ev.defaultPrevented || (ev.button !== 0 && ev.button !== 1)) return;
       if (ev.pointerType === 'touch') {
         touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
         if (touches.size === 2) {
@@ -535,6 +856,7 @@ export class WermaidDiagram extends HTMLElement {
           this._autoFit = false;
           this._view = { zoom: z, x: mid.x - (pinch.mid.x - pinch.view.x) * (z / pinch.view.zoom), y: mid.y - (pinch.mid.y - pinch.view.y) * (z / pinch.view.zoom) };
           this._sizeSvg();
+          this._redrawOverlay();
           return;
         }
       }
@@ -595,7 +917,7 @@ export class WermaidDiagram extends HTMLElement {
         await navigator.clipboard.writeText(d.toSVG());
         this._note('SVG copied');
       } else if (kind === 'save-md') {
-        await this._save(`${name}.md`, new Blob([`\`\`\`mermaid\n${this._text.trim()}\n\`\`\`\n`], { type: 'text/markdown' }));
+        await this._save(`${name}.md`, new Blob([`\`\`\`mermaid\n${this.editedSource.trim()}\n\`\`\`\n`], { type: 'text/markdown' }));
       } else if (kind === 'save-png') {
         await this._save(`${name}.png`, await d.toPNG({ background }));
       } else if (kind === 'save-svg') {
@@ -627,6 +949,11 @@ export class WermaidDiagram extends HTMLElement {
 
 const FEATURES = ['copy', 'download', 'edit', 'undo', 'reset', 'themes', 'edges', 'zoom', 'compare'];
 const FORMATS = ['png', 'svg', 'md'];
+
+/** What a render depends on besides the block: the body, the theme it resolves to, dark or light. */
+function renderKey(block, theme, dark) {
+  return `${block.body}\u0000${theme}\u0000${dark}`;
+}
 
 /** A list given as an array or as space-separated words; "none" is the empty list. */
 function names(value) {

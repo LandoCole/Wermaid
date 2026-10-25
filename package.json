@@ -12,7 +12,8 @@
   "files": [
     "src/wermaid.js",
     "src/themes.js",
-    "src/element.js"
+    "src/element.js",
+    "src/edit.js"
   ],
   "scripts": {
     "build": "node build.mjs",

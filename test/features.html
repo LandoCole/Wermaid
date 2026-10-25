@@ -14,10 +14,15 @@
 %% @end</wermaid-diagram></section>
 <section><wermaid-diagram id="zoom" features="zoom" height="240">flowchart LR
   A --> B --> C</wermaid-diagram></section>
+<section><wermaid-diagram id="ed" features="edit themes edges compare">flowchart LR
+  A --> B --> C</wermaid-diagram></section>
+<section><wermaid-diagram id="ed2" features="edit themes download" formats="png md" themes="pele bogus wermaid">flowchart LR
+  A --> B --> C</wermaid-diagram></section>
 <script type="module">
 import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
 import { defineWermaidElement } from '/src/element.js';
 defineWermaidElement(mermaid, { fonts: false });
+document.addEventListener('wermaid:change', (ev) => window.onWermaidChange?.({ id: ev.target.id, ...ev.detail }));
 await Promise.all([...document.querySelectorAll('wermaid-diagram')].map((e) => e.rendered));
 window.READY = true;
 </script></body></html>

@@ -5,6 +5,9 @@ const ctx = await b.newContext({ viewport: { width: 1200, height: 900 }, acceptD
 const p = await ctx.newPage();
 const pageErrors = [];
 p.on('pageerror', (e) => { pageErrors.push(e.message); console.log('PAGEERR', e.message); });
+// Every wermaid:change on the page, in order.
+const changes = [];
+await p.exposeFunction('onWermaidChange', (detail) => { changes.push(detail); });
 await p.goto(BASE + '/test/features.html');
 await p.waitForFunction(() => window.READY, null, { timeout: 30000 });
 await p.waitForTimeout(300);
@@ -106,6 +109,98 @@ ok('changing features updates the toolbar', await (async () => {
   return one === 'Copy' && await buttons('#plain') === 'Copy,Download';
 })());
 ok('the toolbar buttons have accessible names', await p.$eval('#fmt', (e) => [...e.shadowRoot.querySelectorAll('.toolbar button')].every((n) => n.getAttribute('aria-label') || n.textContent.trim())));
+
+// Editing, pickers and change events.
+const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
+const last = () => changes.at(-1) ?? {};
+const settle = () => p.waitForTimeout(150);
+const rendered = (sel) => p.$eval(sel, (e) => e.rendered.then(() => true, () => false));
+// A node's centre on screen, scrolled into view.
+const nodeCentre = async (sel, id) => {
+  await rendered(sel);
+  await p.$eval(sel, (e) => e.scrollIntoView({ block: 'center' }));
+  return p.$eval(sel, (e, id) => {
+    const r = e.diagram.scene.nodes.get(id).el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }, id);
+};
+const dragNode = async (sel, id, dx, dy) => {
+  const c = await nodeCentre(sel, id);
+  await p.mouse.move(c.x, c.y);
+  await p.mouse.down();
+  await p.mouse.move(c.x + dx, c.y + dy, { steps: 8 });
+  await p.mouse.up();
+  await settle();
+};
+const clickNode = async (sel, id) => {
+  const c = await nodeCentre(sel, id);
+  await p.mouse.click(c.x, c.y);
+  await settle();
+};
+const pickTheme = async (sel, name) => {
+  await p.locator(`${sel} >> [data-act="theme"]`).selectOption(name);
+  await rendered(sel);
+  await settle();
+};
+const pickEdges = async (sel, value) => {
+  await p.locator(`${sel} >> [data-act="edges"]`).selectOption(value);
+  await settle();
+};
+const themeOf = async (sel) => { await rendered(sel); return p.$eval(sel, (e) => e.diagram.theme); };
+const editedSource = (sel) => p.$eval(sel, (e) => e.editedSource);
+const selectionOf = async (sel) => { await rendered(sel); return p.$eval(sel, (e) => e._editor?.selection ?? null); };
+
+ok('edit shows Undo, Redo, Reset, the pickers and compare', await buttons('#ed') === 'Undo,Redo,Reset,Mermaid’s layout'
+  && await p.$eval('#ed', (e) => !!e.shadowRoot.querySelector('[data-act="theme"]:not([hidden])') && !!e.shadowRoot.querySelector('[data-act="edges"]:not([hidden])')), await buttons('#ed'));
+ok('an editable diagram is focusable', await p.$eval('#ed', (e) => e.tabIndex === 0) && await p.$eval('#plain', (e) => !e.hasAttribute('tabindex')));
+await dragNode('#ed', 'B', 0, 60);
+ok('drag nudges and fires one change', changes.length === 1 && changes[0]?.reason === 'drag' && /%% B\s+nudge 0,\d+/.test(changes[0].source), changes);
+ok('editedSource matches the event', await p.$eval('#ed', (e) => e.editedSource) === changes[0]?.source);
+await p.keyboard.press(`${MOD}+z`);
+await settle();
+ok('undo restores and reports', last().reason === 'undo' && !/%% B\s+nudge/.test(last().source), last());
+await p.keyboard.press(`Shift+${MOD}+z`);
+await settle();
+ok('redo brings the change back', last().reason === 'redo' && last().source === changes[0].source && await editedSource('#ed') === changes[0].source, last());
+await p.locator('#ed >> [data-act="undo"]').click();
+await settle();
+ok('the Undo button undoes', last().reason === 'undo' && !/nudge/.test(await editedSource('#ed')), last());
+await pickTheme('#ed', 'pele');
+ok('theme pick writes @theme', /%% @theme pele/.test(last().source) && await themeOf('#ed') === 'pele', last());
+ok('the theme picker shows the theme in use', await p.$eval('#ed', (e) => e.shadowRoot.querySelector('[data-act="theme"]').value) === 'pele');
+ok('the theme picker lists every registered theme', await p.$eval('#ed', (e) => [...e.shadowRoot.querySelector('[data-act="theme"]').options].map((o) => o.value).join(',')) === 'mermaid,wermaid,pele');
+await p.locator('#ed >> [data-act="undo"]').click();
+ok('undoing a theme pick re-renders with the earlier theme', last().reason === 'undo' && await themeOf('#ed') === 'wermaid'
+  && await p.$eval('#ed', (e) => e.shadowRoot.querySelector('[data-act="theme"]').value) === 'wermaid', last());
+await p.locator('#ed >> [data-act="redo"]').click();
+ok('redoing it brings the pick back', last().reason === 'redo' && await themeOf('#ed') === 'pele', last());
+ok('the themes attribute limits the picker to registered names', await p.$eval('#ed2', (e) => [...e.shadowRoot.querySelector('[data-act="theme"]').options].map((o) => o.value).join(',')) === 'pele,wermaid');
+await pickEdges('#ed', 'orthogonal');
+ok('edge-look pick writes @edges', last().reason === 'edges' && /%% @edges orthogonal/.test(last().source) && /%% @theme pele/.test(last().source), last());
+await pickEdges('#ed', 'mermaid');
+ok('Mermaid curves write @edges mermaid', /%% @edges mermaid/.test(last().source), last());
+await pickEdges('#ed', '');
+ok('theme default removes @edges', last().reason === 'edges' && !/@edges/.test(last().source), last());
+const edBefore = await editedSource('#ed');
+await clickNode('#ed2', 'B'); await p.keyboard.press('ArrowRight');
+await settle();
+ok('keys only move the focused diagram', /%% B\s+nudge 1,0/.test(await editedSource('#ed2')) && await editedSource('#ed') === edBefore, await editedSource('#ed2'));
+ok('a key nudge reports once', last().id === 'ed2' && last().reason === 'key', last());
+const edMd = await downloadText('#ed2', 'md');
+ok('markdown export carries the edits', /%% B\s+nudge 1,0/.test(edMd), edMd);
+await p.locator('#ed2 >> [data-act="reset"]').click();
+await settle();
+ok('reset returns to the source as supplied', last().reason === 'reset' && last().source === 'flowchart LR\n  A --> B --> C' && await editedSource('#ed2') === last().source, last());
+ok('reset clears the history', await p.$eval('#ed2', (e) => e.shadowRoot.querySelector('[data-act="undo"]').getAttribute('aria-disabled')) === 'true');
+await p.$eval('#ed', (e) => { e.source = 'flowchart LR\n  X --> Y'; });
+ok('new source drops a stale selection without errors', pageErrors.length === 0 && await selectionOf('#ed') === null, pageErrors);
+ok('a new source is what editedSource shows', await editedSource('#ed') === 'flowchart LR\n  X --> Y');
+await dragNode('#ed', 'X', 0, 40); await p.click('#ed >> [data-act="compare"]');
+ok('compare shows the stock layout', await p.$eval('#ed', (e) => e.diagram.geometry.nodes.get('X').delta.y) === 0
+  && await p.$eval('#ed >> [data-act="compare"]', (b) => b.getAttribute('aria-pressed')) === 'true');
+await p.click('#ed >> [data-act="compare"]');
+ok('compare off shows the edited layout again', await p.$eval('#ed', (e) => e.diagram.geometry.nodes.get('X').delta.y) > 0);
+ok('the editing controls have accessible names', await p.$eval('#ed', (e) => [...e.shadowRoot.querySelectorAll('.toolbar button, .toolbar select')].every((n) => n.getAttribute('aria-label') || n.textContent.trim())));
 
 // Touch devices always show the toolbar.
 const touch = await b.newContext({ viewport: { width: 400, height: 800 }, hasTouch: true, isMobile: true });
