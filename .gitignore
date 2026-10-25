@@ -1,0 +1,5 @@
+node_modules/
+mermaid-dist
+dist/local.html
+test/shots/
+.DS_Store

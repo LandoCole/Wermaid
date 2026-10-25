@@ -1,0 +1,18 @@
+<!doctype html><html><body><div id="out"></div><script type="module">
+import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
+import { createExMermaid } from '/src/ex-mermaid.js';
+import { EXAMPLES } from '/src/examples.mjs';
+mermaid.initialize({startOnLoad:false});
+const exm = createExMermaid(mermaid);
+const d = await exm.render(out, EXAMPLES[1].source, {id:'p'});
+const ov = d.overrides;
+const t0 = performance.now(); let n = 0;
+for (let k = 0; k < 30; k++) {
+  ov.targets.set('bus', { kind:'node', selector:'bus', at: { x: 1000 + k*10, y: 200 + k*8 } });
+  ov.targets.set('fn', { kind:'node', selector:'fn', nudge: { x: -k*6, y: 40 } });
+  d.setOverrides(ov); n++;
+}
+const ms = (performance.now() - t0) / n;
+const routed = [...d.geometry.edges.values()].filter(g => g.mode === 'route').length;
+window.RESULTS = [{ name: `apply with ${routed} routed edges: ${ms.toFixed(1)} ms/frame`, pass: ms < 30 }];
+</script></body></html>

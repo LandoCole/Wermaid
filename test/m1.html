@@ -1,0 +1,171 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div id="a"></div><div id="b"></div>
+<script type="module">
+import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
+import { createExMermaid, parseSource } from '/src/ex-mermaid.js';
+mermaid.initialize({ startOnLoad: false });
+const exm = createExMermaid(mermaid);
+const R = []; const ok = (name, cond, extra) => R.push({ name, pass: !!cond, extra });
+
+const BASE = `flowchart LR
+  A[Start] --> B{Check}
+  B -->|yes| C(Do it)
+  B e9@-->|no| D[(DB)]
+  subgraph G1 [Group one]
+    C --> E[End]
+  end
+  subgraph G2 [Isolated]
+    X --> Y
+  end
+  D --> E`;
+
+const snap = (svg) => ({
+  nodes: Object.fromEntries([...svg.querySelectorAll('g.node')].map((g) => [g.id, g.getAttribute('transform')])),
+  paths: Object.fromEntries([...svg.querySelectorAll('path[data-edge]')].map((p) => [p.dataset.id, (p.getAttribute('d') || '') + '|' + (p.getAttribute('transform') || '')])),
+  clusters: Object.fromEntries([...svg.querySelectorAll('g.cluster > rect')].map((r) => [r.parentNode.id, ['x','y','width','height'].map((k) => r.getAttribute(k)).join(',')])),
+});
+
+// 1. No block → identical to stock Mermaid.
+{
+  const { svg } = await mermaid.render('same', BASE);
+  document.getElementById('a').innerHTML = svg;
+  const stock = document.getElementById('a').innerHTML;
+  const d = await exm.render(document.getElementById('b'), BASE, { id: 'same' });
+  ok('no block: SVG identical to stock', document.getElementById('b').innerHTML === stock);
+  ok('no block: supported + scene read', d.supported && d.scene.nodes.size === 7 && d.scene.clusters.size === 2 && d.scene.edges.size === 6,
+     { nodes: d.scene?.nodes.size, clusters: d.scene?.clusters.size, edges: d.scene?.edges.size });
+}
+
+// 2. Pin one node → only it and its edges change.
+{
+  const base = await exm.render(document.getElementById('a'), BASE, { id: 'p' });
+  const s0 = snap(base.svg);
+  const bBox = base.scene.nodes.get('B').box;
+  const d = await exm.render(document.getElementById('b'), BASE + `\n%% @layout\n%% B at ${bBox.cx},${bBox.cy + 140}\n%% @end`, { id: 'p' });
+  const s1 = snap(d.svg);
+  const changedNodes = Object.keys(s1.nodes).filter((k) => s1.nodes[k] !== s0.nodes[k]);
+  const changedPaths = Object.keys(s1.paths).filter((k) => s1.paths[k] !== s0.paths[k]).sort();
+  ok('pin: only B moved', changedNodes.length === 1 && changedNodes[0].includes('-B-'), changedNodes);
+  ok('pin: only B\'s edges re-routed', JSON.stringify(changedPaths) === JSON.stringify(['L_A_B_0', 'L_B_C_0', 'e9']), changedPaths);
+  const g = d.geometry.nodes.get('B');
+  ok('pin: B center at requested point', Math.abs(g.box.cy - (bBox.cy + 140)) < 0.01);
+  // Edge end should sit on B's boundary (minus arrow pullback)
+  const e = d.geometry.edges.get('L_A_B_0');
+  const last = e.points.at(-1);
+  // B is a diamond: boundary points satisfy |dx|/hw + |dy|/hh = 1
+  const onDiamond = Math.abs(Math.abs(last.x - g.box.cx) / (g.box.w / 2) + Math.abs(last.y - g.box.cy) / (g.box.h / 2) - 1) < 0.01;
+  ok('pin: A→B ends on B boundary', onDiamond, { last, box: g.box });
+  ok('pin: viewBox grew to fit', d.svg.getAttribute('viewBox') !== base.svg.getAttribute('viewBox'), [base.svg.getAttribute('viewBox'), d.svg.getAttribute('viewBox')]);
+}
+
+// 3. Move a node inside a subgraph → subgraph refits.
+{
+  const d0 = await exm.render(document.getElementById('a'), BASE, { id: 'g' });
+  const c = d0.scene.nodes.get('C').box;
+  const d = await exm.render(document.getElementById('b'), BASE + `\n%% @layout\n%% C nudge 0,-160\n%% @end`, { id: 'g' });
+  const G1 = d.geometry.clusters.get('G1').box;
+  const C = d.geometry.nodes.get('C').box;
+  ok('group: G1 contains moved C', G1.y <= C.y && G1.y + G1.h >= C.y + C.h, { G1, C });
+  ok('group: G2 untouched', !d.geometry.clusters.get('G2').changed);
+  const r = d.svg.querySelector(`#g-G1 > rect`);
+  const rb = r.getBBox();
+  ok('group: rect drawn at new size', Math.abs(rb.height - G1.h) < 0.5, { rb: rb.height, G1: G1.h });
+}
+
+// 4. Stale ids → warnings, not crashes.
+{
+  const d = await exm.render(document.getElementById('b'), BASE + `\n%% @layout\n%% Nope at 1,2\n%% Q->R via 3,4\n%% A frob 2\n%% @end`, { id: 's' });
+  ok('stale: two warnings', d.warnings.length === 2, d.warnings);
+  ok('stale: parse error reported with line', d.parseErrors.length === 1 && d.parseErrors[0].line > 0, d.parseErrors);
+}
+
+// 5. Source edits keep unrelated overrides.
+{
+  const src = BASE + `\n%% @layout\n%% D nudge 0,60\n%% @end`;
+  const edited = src.replace('D --> E', 'D --> E\n  E --> F[New node]');
+  const d = await exm.render(document.getElementById('b'), edited, { id: 'e' });
+  const d0 = await exm.render(document.getElementById('a'), edited.replace(/%% @layout[\s\S]*/, ''), { id: 'e' });
+  ok('edit: override survives a new node', Math.abs(d.geometry.nodes.get('D').box.cy - d0.scene.nodes.get('D').box.cy - 60) < 0.01 && d.warnings.length === 0, d.warnings);
+}
+
+// 6. Subgraph nudge carries children; 7. resize; 8. via + label
+{
+  const d0 = await exm.render(document.getElementById('a'), BASE, { id: 'c' });
+  const d = await exm.render(document.getElementById('b'), BASE + `\n%% @layout\n%% G2 nudge 400,0\n%% A size 160x80\n%% edge e9 via 300,500 ; label 0,20\n%% @end`, { id: 'c' });
+  const X0 = d0.scene.nodes.get('X').box, X1 = d.geometry.nodes.get('X').box;
+  ok('group nudge: X moved with G2', Math.abs(X1.cx - X0.cx - 400) < 0.01);
+  ok('group nudge: X→Y path shifted, not re-routed', d.geometry.edges.get('L_X_Y_0').mode === 'shift');
+  const A = d.geometry.nodes.get('A').box;
+  const ab = d.svg.querySelector('[id$="-flowchart-A-0"]');
+  const rb = ab.querySelector('.label-container').getBoundingClientRect();
+  ok('resize: A drawn 160x80', A.w === 160 && A.h === 80 && Math.abs(rb.width / rb.height - 2) < 0.05, { w: rb.width, h: rb.height });
+  const e9 = d.geometry.edges.get('e9');
+  ok('via: route passes through waypoint', e9.points.some((p) => p.x === 300 && p.y === 500));
+  ok('label: offset applied', e9.labelBox && Math.abs(e9.labelBox.cy - e9.labelAuto.y - 20) < 0.01);
+}
+
+// 9. Other diagram types
+{
+  const st = await exm.render(document.getElementById('b'), `stateDiagram-v2
+  [*] --> Idle
+  Idle --> Running : start
+  Running --> Idle : stop
+  state Running {
+    [*] --> Warm
+    Warm --> Hot
+  }
+  Running --> [*]`, { id: 'st' });
+  ok('state: supported', st.supported && st.scene.nodes.size >= 4, { nodes: st.scene && [...st.scene.nodes.keys()], clusters: st.scene && [...st.scene.clusters.keys()], edges: st.scene && [...st.scene.edges.keys()] });
+  const cl = await exm.render(document.getElementById('b'), `classDiagram
+  class Order { +id: UUID\n +total() Money }
+  class Customer
+  Customer "1" --> "*" Order : places
+  Order *-- LineItem`, { id: 'cl' });
+  ok('class: supported', cl.supported && cl.scene.nodes.size === 3, { nodes: cl.scene && [...cl.scene.nodes.keys()], edges: cl.scene && [...cl.scene.edges.values()].map(e=>[e.id,e.pull]) });
+  const sq = await exm.render(document.getElementById('b'), `sequenceDiagram\n  A->>B: hi`, { id: 'sq' });
+  ok('sequence: renders stock, marked unsupported', !sq.supported && sq.svg);
+}
+
+// 10. Round trip: write block back
+{
+  const d = await exm.render(document.getElementById('b'), BASE, { id: 'w' });
+  const ov = d.overrides;
+  ov.targets.set('B', { kind: 'node', selector: 'B', at: { x: 250.123, y: 400 } });
+  ov.targets.set('edge:e9', { kind: 'edge', selector: 'e9', via: [{ x: 1, y: 2 }] });
+  ov.targets.set('edge:L_A_B_0', { kind: 'edge', selector: 'L_A_B_0', label: { x: 0, y: -10 } });
+  d.setOverrides(ov);
+  const out = d.writeSource(BASE);
+  const back = parseSource(out);
+  ok('roundtrip: block written', /%% @layout v1[\s\S]*%% B\s+at 250.1,400[\s\S]*%% A->B\s+label 0,-10[\s\S]*%% edge e9\s+via 1,2[\s\S]*%% @end/.test(out), out);
+  ok('roundtrip: parses back', back.overrides.targets.size === 3 && back.body === BASE);
+}
+// 11. Obstacle avoidance: a node dropped onto an edge pushes that edge around it,
+//     and no re-routed edge passes through any shape.
+{
+  const d0 = await exm.render(document.getElementById('a'), BASE, { id: 'o' });
+  const A = d0.scene.nodes.get('A').box, B = d0.scene.nodes.get('B').box;
+  const mid = { x: (A.x + A.w + B.x) / 2, y: A.cy };
+  const d = await exm.render(document.getElementById('b'), BASE + `\n%% @layout\n%% Y at ${mid.x},${mid.y}\n%% C nudge 0,200\n%% @end`, { id: 'o' });
+  const ab = d.geometry.edges.get('L_A_B_0');
+  ok('avoid: edge under a dropped node re-routes', ab.mode === 'route', ab.mode);
+  const hits = [];
+  for (const [id, ge] of d.geometry.edges) {
+    if (ge.mode !== 'route' || ge.style !== 'orthogonal') continue;
+    const e = d.scene.edges.get(id);
+    const pts = ge.points;
+    for (const [nid, n] of d.geometry.nodes) {
+      if (nid === e.start || nid === e.end) continue;
+      const b = n.box;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p = pts[i], q = pts[i + 1];
+        const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x), y0 = Math.min(p.y, q.y), y1 = Math.max(p.y, q.y);
+        if (x1 > b.x + 1 && x0 < b.x + b.w - 1 && y1 > b.y + 1 && y0 < b.y + b.h - 1) hits.push([id, nid]);
+      }
+    }
+  }
+  ok('avoid: no routed edge crosses a shape', hits.length === 0, hits);
+  const orth = [...d.geometry.edges.values()].filter((g) => g.style === 'orthogonal');
+  ok('avoid: routes are orthogonal', orth.length > 0 && orth.every((g) => g.points.every((p, i, a) => !i || Math.abs(p.x - a[i - 1].x) < 0.01 || Math.abs(p.y - a[i - 1].y) < 0.01)), orth.map((g) => g.points));
+}
+window.RESULTS = R;
+</script></body></html>
