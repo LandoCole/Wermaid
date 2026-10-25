@@ -3013,6 +3013,11 @@ class WermaidDiagram extends HTMLElement {
       if (this._stock && !this._editor) diagram.showStock();
       this._applyChrome();
       if (this._pannable()) this._fit();
+      // The text moved on while this render ran (an undo during a theme pick, say): catch up,
+      // by re-applying the newer block when this drawing fits it, else by rendering again.
+      if (this._current !== text) {
+        if (this._inSync()) this._show(this._current); else this._schedule();
+      }
       this.dispatchEvent(new CustomEvent('wermaid:render', { detail: { diagram }, bubbles: true, composed: true }));
       return diagram;
     } catch (err) {

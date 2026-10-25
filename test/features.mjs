@@ -174,6 +174,24 @@ ok('undoing a theme pick re-renders with the earlier theme', last().reason === '
   && await p.$eval('#ed', (e) => e.shadowRoot.querySelector('[data-act="theme"]').value) === 'wermaid', last());
 await p.locator('#ed >> [data-act="redo"]').click();
 ok('redoing it brings the pick back', last().reason === 'redo' && await themeOf('#ed') === 'pele', last());
+// A pick undone while its render is still running: the drawing must catch up with the text.
+const settled = (sel) => p.$eval(sel, async (e) => {
+  let r;
+  do { r = e.rendered; await r.catch(() => {}); await new Promise((res) => setTimeout(res, 50)); } while (r !== e.rendered);
+});
+await p.$eval('#ed', async (e) => {
+  const pick = e.shadowRoot.querySelector('[data-act="theme"]');
+  pick.value = 'mermaid';
+  pick.dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise((res) => setTimeout(res));
+  e.shadowRoot.querySelector('[data-act="undo"]').click();
+});
+await settled('#ed');
+ok('an undo during a theme render leaves drawing and text agreeing', await p.$eval('#ed', (e) => e.diagram.theme) === 'pele'
+  && /%% @theme pele/.test(await editedSource('#ed')), [await p.$eval('#ed', (e) => e.diagram.theme), await editedSource('#ed')]);
+const before = changes.length;
+await dragNode('#ed', 'A', 0, 40);
+ok('a drag after that is recorded', changes.length === before + 1 && last().reason === 'drag' && /%% A\s+nudge 0,\d+/.test(last().source), last());
 ok('the themes attribute limits the picker to registered names', await p.$eval('#ed2', (e) => [...e.shadowRoot.querySelector('[data-act="theme"]').options].map((o) => o.value).join(',')) === 'pele,wermaid');
 await pickEdges('#ed', 'orthogonal');
 ok('edge-look pick writes @edges', last().reason === 'edges' && /%% @edges orthogonal/.test(last().source) && /%% @theme pele/.test(last().source), last());
