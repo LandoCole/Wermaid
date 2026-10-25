@@ -47,7 +47,11 @@ directive, so it never changes the page's global Mermaid config.
 |---|---|
 | `mermaid` | Mermaid's own black-and-white theme (`neutral`, and `dark` in dark mode) |
 | `wermaid` | Thin outlines, IBM Plex Mono, no fills (the editor's default) |
-| `pele` | The look of [Pele](https://pele.run) by [Steph Ango](https://stephango.com) (see [Thanks](#thanks)): filled, rounded nodes in [Flexoki](https://stephango.com/flexoki) colours with a system sans. If the page defines Pele's `--pele-*` CSS variables, those win, so an existing Pele skin carries over. |
+| `pele` | Filled, rounded nodes in Flexoki colours with a system sans. If the page defines Pele's `--pele-*` CSS variables, those win, so an existing Pele skin carries over. |
+
+The `pele` palette is a thank-you to [Pele](https://pele.run), the Mermaid renderer by
+Steph Ango ([@kepano](https://github.com/kepano)), and uses kepano's
+[Flexoki](https://stephango.com/flexoki) colours.
 
 Pele is its own renderer with its own layout; Wermaid borrows its skin, not its engine,
 because the layout block is anchored to Mermaid's layout. Every palette has a light and a dark
@@ -213,19 +217,12 @@ The name: Wermaid is Mermaid with its M flipped over into a W.
 
 ## Thanks
 
-The `pele` palette is a thank-you to **[Pele](https://pele.run)**, the Mermaid renderer by
-**[Steph Ango](https://stephango.com)** ([@kepano](https://github.com/kepano)), made for Obsidian:
-[github.com/obsidianmd/pele](https://github.com/obsidianmd/pele) (MIT). Its clean, filled look
-showed how good a Mermaid diagram can be, and its colours are
-[Flexoki](https://stephango.com/flexoki), also by Steph. Thank you, Steph.
-
-Wermaid borrows Pele's look, not its code: the palette is re-expressed as a Mermaid theme, and
-Wermaid reads Pele's `--pele-*` CSS variables so an existing Pele skin carries over. Pele is a
-separate renderer with its own layout; use it directly if you want Pele itself. The editor and the
-embed demo credit Pele whenever its palette is shown.
-
-Diagrams are parsed, laid out and drawn by [Mermaid](https://mermaid.js.org); Wermaid only adjusts
-what Mermaid produces. The editor's type is [IBM Plex Mono](https://github.com/IBM/plex).
+- **[Steph Ango](https://stephango.com) ([@kepano](https://github.com/kepano))** for
+  [Pele](https://pele.run) ([source](https://github.com/obsidianmd/pele), MIT) and
+  [Flexoki](https://stephango.com/flexoki), the look and colours of the `pele` palette.
+  Wermaid borrows the look, not the code.
+- **[Mermaid](https://mermaid.js.org)**, which parses, lays out and draws every diagram.
+- **[IBM Plex Mono](https://github.com/IBM/plex)**, the editor's typeface.
 
 ## Development
 
