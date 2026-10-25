@@ -90,6 +90,15 @@ s = await src();
 ok('edge style picker writes @edges', /%% @edges orthogonal/.test(s), s.split('%% @layout')[1]);
 await p.selectOption('#edge-style', ''); await p.waitForTimeout(200);
 ok('edge style picker clears @edges', !/@edges/.test(await src()));
+// 11c. palette picker (fix the deliberately broken source first)
+await p.$eval('#src', (t) => { t.value = t.value.replace('\n  ]]] broken', ''); t.dispatchEvent(new Event('input')); });
+await p.waitForTimeout(900);
+await p.selectOption('#palette', 'pele'); await p.waitForTimeout(900);
+s = await src();
+const fill = await p.$eval('#sheet g.node .label-container', (n) => getComputedStyle(n).fill);
+ok('palette picker writes @theme and re-renders', /%% @theme pele/.test(s) && fill === 'rgb(242, 240, 229)', [fill, s.split('%% @layout')[1]]);
+await p.selectOption('#palette', 'wermaid'); await p.waitForTimeout(900);
+ok('choosing Wermaid removes @theme', !/@theme/.test(await src()));
 // 12. switch examples
 for (const v of ['1', '2', '3', '4']) {
   await p.selectOption('#example', v); await p.waitForTimeout(900);

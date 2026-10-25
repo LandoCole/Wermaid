@@ -1,8 +1,11 @@
 import fs from 'node:fs';
 import { EXAMPLES } from './src/examples.mjs';
-const lib = fs.readFileSync('src/wermaid.js', 'utf8')
+const strip = (src) => src
+  .replace(/^import .*$/gm, '')
+  .replace(/^export \{[^}]*\};?$/gm, '')
   .replace(/^export default .*$/m, '')
   .replace(/^export (const|function|class|async function) /gm, '$1 ');
+const lib = strip(fs.readFileSync('src/themes.js', 'utf8')) + '\n' + strip(fs.readFileSync('src/wermaid.js', 'utf8'));
 let html = fs.readFileSync('src/editor.html', 'utf8');
 html = html.replace('/*__WERMAID_LIBRARY__*/', () => lib).replace('/*__WERMAID_EXAMPLES__*/', () => JSON.stringify(EXAMPLES, null, 2));
 fs.mkdirSync('dist', { recursive: true });

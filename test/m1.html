@@ -2,7 +2,7 @@
 <div id="a"></div><div id="b"></div>
 <script type="module">
 import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
-import { createWermaid, parseSource } from '/src/wermaid.js';
+import { createWermaid, parseSource, withTheme } from '/src/wermaid.js';
 mermaid.initialize({ startOnLoad: false });
 const wermaid = createWermaid(mermaid);
 const R = []; const ok = (name, cond, extra) => R.push({ name, pass: !!cond, extra });
@@ -194,6 +194,29 @@ const snap = (svg) => ({
   ok('edge looks round-trip', /%% @edges orthogonal/.test(out) && /edge e9\s+via [\d, ]+ ; style curved/.test(out) && parseSource(out).overrides.settings.edges.style === 'orthogonal', out);
   const bad = parseSource(BASE + `\n%% @layout\n%% @edges wavy\n%% A->B style zig\n%% @end`);
   ok('bad looks report errors', bad.errors.length === 2, bad.errors);
+}
+// 13. Palettes
+{
+  const fillOf = (d) => getComputedStyle(d.svg.querySelector('g.node .label-container')).fill;
+  const pele = await wermaid.render(document.getElementById('b'), BASE + `\n%% @layout\n%% @theme pele\n%% B nudge 0,40\n%% @end`, { id: 't' });
+  ok('@theme pele: nodes filled with Pele surface', fillOf(pele) === 'rgb(242, 240, 229)', fillOf(pele));
+  ok('@theme pele: overrides still apply', Math.abs(pele.geometry.nodes.get('B').delta.y - 40) < 0.01 && pele.theme === 'pele' && pele.background === '#fffcf0');
+  const dark = await wermaid.render(document.getElementById('b'), BASE + `\n%% @layout\n%% @theme pele\n%% @end`, { id: 't', dark: true });
+  ok('@theme pele dark variant', fillOf(dark) === 'rgb(28, 27, 26)', fillOf(dark));
+  document.getElementById('b').style.setProperty('--pele-surface', '#123456');
+  const skin = await wermaid.render(document.getElementById('b'), BASE + `\n%% @layout\n%% @theme pele\n%% @end`, { id: 't' });
+  document.getElementById('b').style.removeProperty('--pele-surface');
+  ok('pele reads --pele-* variables from the page', fillOf(skin) === 'rgb(18, 52, 86)', fillOf(skin));
+  const wm = await wermaid.render(document.getElementById('b'), BASE, { id: 't', theme: 'wermaid' });
+  ok('theme option: wermaid has no fill', fillOf(wm) === 'rgb(249, 249, 247)', fillOf(wm));
+  const mm = await wermaid.render(document.getElementById('b'), BASE, { id: 't', theme: 'mermaid' });
+  ok('theme option: mermaid neutral', fillOf(mm) === 'rgb(238, 238, 238)', fillOf(mm));
+  ok('front matter stays first', withTheme('---\ntitle: X\n---\nflowchart LR\n A-->B', 'pele').startsWith('---\ntitle: X\n---\n%%{init:'));
+  const bad = parseSource(BASE + `\n%% @layout\n%% @theme neon\n%% @end`);
+  ok('unknown palette reports an error', bad.errors.length === 1 && !bad.overrides.settings.theme, bad.errors);
+  pele.overrides.settings.edges = { style: 'rounded' };
+  const out = pele.writeSource(BASE);
+  ok('palette round-trips', /%% @layout v1\n%% @theme pele\n%% @edges rounded/.test(out), out);
 }
 window.RESULTS = R;
 </script></body></html>

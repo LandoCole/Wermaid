@@ -15,6 +15,7 @@ flowchart LR
   B e1@-->|no| D
 
 %% @layout v1
+%% @theme pele                  (palette: mermaid, wermaid or pele)
 %% @edges rounded               (draw every edge square-routed with rounded corners)
 %% B        nudge 0,40            (offset from where Mermaid puts it)
 %% C        at 320,200            (pin the center, diagram units)
@@ -33,6 +34,26 @@ flowchart LR
 | `via x,y …` | edge | Route the edge through these points |
 | `label dx,dy` | edge | Offset the label from its automatic spot |
 | `style rounded \| orthogonal \| curved` | edge | Draw this edge in a different look |
+
+### Palettes
+
+`%% @theme <name>` picks a palette. It's applied to that one diagram as a Mermaid init
+directive, so it never changes the page's global Mermaid config.
+
+| Palette | Look |
+|---|---|
+| `mermaid` | Mermaid's own black-and-white theme (`neutral`, and `dark` in dark mode) |
+| `wermaid` | Thin outlines, IBM Plex Mono, no fills (the editor's default) |
+| `pele` | The look of [Pele](https://pele.run): filled, rounded nodes in Flexoki colours with a system sans. If the page defines Pele's `--pele-*` CSS variables, those win, so an existing Pele skin carries over. |
+
+Pele is its own renderer with its own layout; Wermaid borrows its skin, not its engine,
+because the layout block is anchored to Mermaid's layout. Every palette has a light and a dark
+variant; pass `dark: true` to `render()` for the dark one. Palettes change fonts and spacing,
+so Mermaid's auto layout shifts a little between them: `nudge` offsets follow along, `at` pins
+don't.
+
+New palettes live in `src/themes.js`: each one returns a Mermaid config (`theme`,
+`themeVariables`, `themeCSS`, layout spacing) for light or dark.
 
 ### Edge looks
 
@@ -64,6 +85,7 @@ exist produce warnings and are ignored.
   to offset it, a subgraph's frame to move everything inside.
 - Arrow keys nudge, Delete resets the selection, Ctrl/⌘ Z undoes.
 - "Edges" in the diagram header sets the look for every edge; a selected edge has its own style picker.
+- "Palette" switches between Mermaid, Wermaid and Pele, and follows the page's light/dark mode.
 - "Stock" shows Mermaid's own layout for comparison.
 
 Diagrams render with Mermaid's `base` theme driven by the page's color tokens: thin outlines,
@@ -77,7 +99,7 @@ import mermaid from 'mermaid';               // v11+
 import { createWermaid } from 'wermaid';
 
 const wermaid = createWermaid(mermaid);
-const diagram = await wermaid.render(container, source);   // stock render + overrides
+const diagram = await wermaid.render(container, source, { theme: 'pele', dark: false });
 diagram.geometry;                 // final node/subgraph boxes and edge points
 diagram.setOverrides(next);       // re-apply without re-running Mermaid
 diagram.showStock();              // Mermaid's own layout
@@ -103,13 +125,14 @@ Other types (sequence, gantt, …) render as stock Mermaid.
 ```
 npm install
 npm run link-mermaid      # serves node_modules/mermaid/dist at /mermaid-dist for tests
-npm run build             # inlines src/wermaid.js + src/examples.mjs into dist/editor.html
+npm run build             # inlines src/themes.js, src/wermaid.js and src/examples.mjs into dist/editor.html
 npm run serve &           # http://127.0.0.1:8765/dist/local.html?mermaid=/mermaid-dist/mermaid.esm.min.mjs
 npx playwright install chromium
 npm test
 ```
 
 - `src/wermaid.js` – the library (no dependencies besides the Mermaid instance you pass in)
+- `src/themes.js` – palettes
 - `src/editor.html` – editor template; `src/examples.mjs` – the bundled examples
 - `test/m1.html` – library suite: stock-identical render, local effect, subgraph refit, stale ids,
   round trip, obstacle avoidance

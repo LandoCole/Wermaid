@@ -1,6 +1,6 @@
 {
   "name": "wermaid",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Manual layout overrides for vanilla Mermaid: keep the auto layout, nudge what needs it.",
   "type": "module",
   "main": "src/wermaid.js",
@@ -8,7 +8,8 @@
     ".": "./src/wermaid.js"
   },
   "files": [
-    "src/wermaid.js"
+    "src/wermaid.js",
+    "src/themes.js"
   ],
   "scripts": {
     "build": "node build.mjs",

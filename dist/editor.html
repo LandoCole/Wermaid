@@ -123,7 +123,7 @@
   .zoom button:hover { color: var(--ink); }
   .zoom output { font-size: 12px; min-width: 4.5ch; text-align: center; font-variant-numeric: tabular-nums; color: var(--graphite); }
 
-  .sheet-wrap { position: relative; overflow: auto; min-height: 0; }
+  .sheet-wrap { position: relative; overflow: auto; min-height: 0; background: var(--sheet-bg, transparent); }
   #sheet { padding: 44px 36px 36px; width: max-content; min-width: 100%; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
   #sheet svg { display: block; overflow: visible; }
   #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel { cursor: grab; }
@@ -205,6 +205,9 @@
     <p>Mermaid lays it out. You nudge what needs it.</p>
   </div>
   <div class="controls">
+    <label class="field-inline" for="palette"><span class="eyebrow">Palette</span>
+      <select id="palette" class="pick"></select>
+    </label>
     <label class="field-inline" for="example"><span class="eyebrow">Example</span>
       <select id="example" class="pick"></select>
     </label>
@@ -255,6 +258,134 @@
 
 <script type="module">
 /*
+ * Wermaid palettes: named looks for diagrams, applied per diagram as a Mermaid
+ * `%%{init}%%` directive so they never touch the page's global Mermaid config.
+ *
+ *   mermaid  Mermaid's own black-and-white theme (`neutral`; `dark` in dark mode)
+ *   wermaid  thin outlines, IBM Plex Mono, no fills
+ *   pele     the look of Pele (pele.run): filled rounded nodes, Flexoki colours,
+ *            system sans. Reads `--pele-*` CSS variables from the page when set,
+ *            so an existing Pele skin carries over.
+ */
+
+const MONO = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace';
+const SANS = '-apple-system, BlinkMacSystemFont, "Inter Variable", Inter, "Segoe UI", Helvetica, Arial, sans-serif';
+
+/** Theme variables shared by palettes built on Mermaid's `base` theme. */
+function baseVariables(c, font, fontSize, dark) {
+  return {
+    darkMode: dark, background: c.bg, fontFamily: font, fontSize,
+    primaryColor: c.fill, primaryTextColor: c.fg, primaryBorderColor: c.border,
+    secondaryColor: c.fill, secondaryTextColor: c.fg, secondaryBorderColor: c.border,
+    tertiaryColor: c.fill, tertiaryTextColor: c.fg, tertiaryBorderColor: c.border,
+    mainBkg: c.fill, nodeBorder: c.border, nodeTextColor: c.fg, textColor: c.fg, titleColor: c.fg,
+    lineColor: c.line, clusterBkg: c.cluster, clusterBorder: c.clusterBorder, edgeLabelBackground: c.bg,
+    classText: c.fg, labelBackgroundColor: c.bg,
+    stateBkg: c.fill, stateBorder: c.border, transitionColor: c.line, transitionLabelColor: c.muted,
+    specialStateColor: c.line, innerEndBackground: c.line, compositeBackground: c.cluster,
+    compositeTitleBackground: c.cluster, altBackground: c.cluster, stateLabelColor: c.fg,
+    actorBkg: c.fill, actorBorder: c.border, actorTextColor: c.fg, actorLineColor: c.clusterBorder,
+    signalColor: c.line, signalTextColor: c.fg, noteBkgColor: c.cluster, noteBorderColor: c.clusterBorder,
+    noteTextColor: c.muted, activationBkgColor: c.fill, activationBorderColor: c.border,
+    labelBoxBkgColor: c.fill, labelBoxBorderColor: c.border, labelTextColor: c.fg, loopTextColor: c.muted,
+  };
+}
+
+const WERMAID = {
+  light: { bg: '#F9F9F7', fg: '#1E1F22', muted: '#696A6F', line: '#1E1F22', fill: '#F9F9F7', border: '#8E8E93', cluster: '#F9F9F7', clusterBorder: '#BDBDC1' },
+  dark: { bg: '#151516', fg: '#E7E7E3', muted: '#9B9CA0', line: '#E7E7E3', fill: '#151516', border: '#67676D', cluster: '#151516', clusterBorder: '#3A3A3F' },
+};
+
+// Pele's published light and dark skins (Flexoki).
+const PELE = {
+  light: { bg: '#fffcf0', fg: '#100f0f', muted: '#6f6e69', line: '#100f0f', surface: '#f2f0e5', surfaceAlt: '#e6e4d9', border: '#cecdc3', accent: '#205ea6', radius: 6 },
+  dark: { bg: '#100f0f', fg: '#cecdc3', muted: '#878580', line: '#cecdc3', surface: '#1c1b1a', surfaceAlt: '#282726', border: '#403e3c', accent: '#4385be', radius: 6 },
+};
+const PELE_VARS = {
+  bg: '--pele-bg', fg: '--pele-fg', muted: '--pele-muted', line: '--pele-line', surface: '--pele-surface',
+  surfaceAlt: '--pele-surface-alt', border: '--pele-border', accent: '--pele-accent', radius: '--pele-radius', font: '--pele-font',
+};
+
+/** Pele colours, taking any `--pele-*` variables defined around `el` over the defaults. */
+function peleColors(dark, el) {
+  const c = { ...(dark ? PELE.dark : PELE.light), font: SANS };
+  if (el && typeof getComputedStyle === 'function') {
+    const cs = getComputedStyle(el);
+    for (const [key, name] of Object.entries(PELE_VARS)) {
+      const v = cs.getPropertyValue(name).trim();
+      if (!v) continue;
+      c[key] = key === 'radius' ? parseFloat(v) || c.radius : v;
+    }
+  }
+  return c;
+}
+
+const THEMES = {
+  mermaid: {
+    label: 'Mermaid',
+    background: (dark) => (dark ? '#333333' : '#ffffff'),
+    config: ({ dark }) => ({ theme: dark ? 'dark' : 'neutral' }),
+  },
+  wermaid: {
+    label: 'Wermaid',
+    fonts: ['400 13px "IBM Plex Mono"', '500 13px "IBM Plex Mono"'],
+    background: (dark) => (dark ? WERMAID.dark.bg : WERMAID.light.bg),
+    config: ({ dark }) => {
+      const c = dark ? WERMAID.dark : WERMAID.light;
+      return {
+        theme: 'base', fontFamily: MONO,
+        flowchart: { htmlLabels: true, padding: 14, nodeSpacing: 56, rankSpacing: 56 },
+        themeVariables: baseVariables(c, MONO, '13px', dark),
+        themeCSS: `
+          .node rect, .node polygon, .node circle, .node ellipse, .node path, .cluster rect,
+          .statediagram-cluster rect, .classGroup rect, .divider, .actor { stroke-width: 1px !important; }
+          .flowchart-link, .transition, .relation { stroke-width: 1px !important; }
+          .edgeLabel, .edgeLabel p, .edgeLabel span { color: ${c.muted} !important; font-size: 12px; }
+          .edgeLabel rect, .labelBkg { fill: ${c.bg} !important; background-color: ${c.bg} !important; }
+          .cluster-label span, .cluster-label p { color: ${c.fg}; font-weight: 500; }`,
+      };
+    },
+  },
+  pele: {
+    label: 'Pele',
+    background: (dark, el) => peleColors(dark, el).bg,
+    config: ({ dark, el }) => {
+      const p = peleColors(dark, el);
+      const c = { bg: p.bg, fg: p.fg, muted: p.muted, line: p.line, fill: p.surface, border: p.border, cluster: p.bg, clusterBorder: p.border };
+      const r = p.radius;
+      return {
+        theme: 'base', fontFamily: p.font,
+        flowchart: { htmlLabels: true, padding: 16, nodeSpacing: 48, rankSpacing: 52 },
+        themeVariables: baseVariables(c, p.font, '14px', dark),
+        themeCSS: `
+          .node rect, .node polygon, .node circle, .node ellipse, .node path, .cluster rect,
+          .classGroup rect, .actor { stroke-width: 1px !important; }
+          .node rect, .cluster rect, .statediagram-state rect, .actor { rx: ${r}px; ry: ${r}px; }
+          .flowchart-link, .transition, .relation { stroke-width: 1px !important; stroke-linecap: round; }
+          .edgeLabel, .edgeLabel p, .edgeLabel span { color: ${p.muted} !important; font-size: 13px; }
+          .edgeLabel rect, .labelBkg { fill: ${p.bg} !important; background-color: ${p.bg} !important; }
+          .cluster rect { fill: ${p.surfaceAlt} !important; fill-opacity: 0.35; }
+          .cluster-label span, .cluster-label p { color: ${p.muted}; }`,
+      };
+    },
+  },
+};
+
+const DEFAULT_THEME = 'wermaid';
+
+/**
+ * Put a palette's config in front of the diagram as an init directive
+ * (after any front matter, which Mermaid only reads at the very top).
+ */
+function withTheme(body, name, { dark = false, el = null } = {}) {
+  const theme = THEMES[name];
+  if (!theme) return body;
+  const directive = `%%{init: ${JSON.stringify(theme.config({ dark, el }))}}%%`;
+  const fm = body.match(/^\s*---\n[\s\S]*?\n---\s*\n/);
+  return fm ? `${fm[0]}${directive}\n${body.slice(fm[0].length)}` : `${directive}\n${body}`;
+}
+
+/*
  * Wermaid — manual layout overrides for vanilla Mermaid.
  *
  * Pipeline:
@@ -269,7 +400,10 @@
  * ignores it and draws the stock layout.
  */
 
-const VERSION = '0.1.0';
+
+
+
+const VERSION = '0.3.0';
 
 /* ------------------------------------------------------------------ */
 /* Layout block: parse                                                 */
@@ -333,6 +467,10 @@ function parseBlockLines(blockLines, firstLineNo) {
           if (!/^\d+(\.\d+)?$/.test(radius)) errors.push({ line: lineNo, message: `@edges radius must be a number — got "${radius}"` });
           else overrides.settings.edges.radius = +radius;
         }
+      } else if (name === 'theme') {
+        const [theme] = args;
+        if (!THEMES[theme]) errors.push({ line: lineNo, message: `@theme expects ${Object.keys(THEMES).join(', ')} — got "${theme ?? ''}"` });
+        else overrides.settings.theme = theme;
       } else {
         errors.push({ line: lineNo, message: `unknown setting "@${name}"` });
       }
@@ -437,7 +575,8 @@ function entryOps(e) {
 function serializeBlock(overrides, scene) {
   const entries = [...overrides.targets.values()].filter((e) => entryOps(e));
   const edgesSetting = overrides.settings?.edges;
-  if (!entries.length && !overrides.comments.length && !edgesSetting) return '';
+  const themeSetting = overrides.settings?.theme;
+  if (!entries.length && !overrides.comments.length && !edgesSetting && !themeSetting) return '';
   const order = new Map();
   if (scene) {
     let i = 0;
@@ -450,6 +589,7 @@ function serializeBlock(overrides, scene) {
   const label = (e) => (e.kind === 'edge' ? edgeSelector(e, scene) : e.selector);
   const width = Math.max(4, ...entries.map((e) => label(e).length));
   const out = ['%% @layout v1'];
+  if (themeSetting) out.push(`%% @theme ${themeSetting}`);
   if (edgesSetting) out.push(`%% @edges ${edgesSetting.style}${edgesSetting.radius !== undefined ? ` ${r1(edgesSetting.radius)}` : ''}`);
   for (const c of overrides.comments) out.push(`%% ${c}`);
   for (const e of entries) out.push(`%% ${label(e).padEnd(width)}  ${entryOps(e)}`);
@@ -1145,7 +1285,8 @@ function readScene(svg, svgId, data, direction) {
     const labelInner = svg.querySelector(`g.edgeLabel > g.label[data-id="${cssId(e.id)}"]`);
     const labelEl = labelInner?.parentElement || null;
     let labelBox = null;
-    if (labelEl) {
+    // Edges without text still get a small label chip; only labels with text count.
+    if (labelEl && labelEl.textContent.trim()) {
       const b = labelEl.getBBox();
       if (b.width > 0 && b.height > 0) labelBox = bboxInRoot(root, labelEl);
     }
@@ -1450,17 +1591,24 @@ let counter = 0;
  *   diagram.setOverrides(overrides);   // re-apply without re-running Mermaid
  */
 function createWermaid(mermaid) {
-  async function render(container, source, { id } = {}) {
+  /**
+   * Render `source` into `container`.
+   * Options: `id` (SVG id), `theme` (palette name; defaults to the block's `@theme`,
+   * else Mermaid's own config), `dark` (use the palette's dark variant).
+   */
+  async function render(container, source, { id, theme, dark = false } = {}) {
     const parsed = parseSource(source);
     const svgId = id || `wm-${++counter}`;
-    const { svg: svgText, bindFunctions } = await mermaid.render(svgId, parsed.body);
+    const themeName = theme ?? parsed.overrides.settings.theme ?? null;
+    const body = themeName ? withTheme(parsed.body, themeName, { dark, el: container }) : parsed.body;
+    const { svg: svgText, bindFunctions } = await mermaid.render(svgId, body);
     container.innerHTML = svgText;
     const svg = container.querySelector('svg');
     bindFunctions?.(container);
 
     let data = null, type = null, direction = null, curve = 'basis';
     try {
-      const diag = await mermaid.mermaidAPI.getDiagramFromText(parsed.body);
+      const diag = await mermaid.mermaidAPI.getDiagramFromText(body);
       type = diag.type;
       if (typeof diag.db.getData === 'function') {
         data = diag.db.getData();
@@ -1482,6 +1630,8 @@ function createWermaid(mermaid) {
 
     const diagram = {
       svg, svgId, type, supported, scene,
+      theme: themeName,
+      background: themeName ? THEMES[themeName]?.background(dark, container) ?? null : null,
       parseErrors: parsed.errors,
       get overrides() { return overrides; },
       get geometry() { return geom; },
@@ -1509,7 +1659,7 @@ function createWermaid(mermaid) {
     return diagram;
   }
 
-  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, VERSION };
+  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, THEMES, VERSION };
 }
 
 
@@ -1567,49 +1717,10 @@ const isDark = () => {
   const t = document.documentElement.dataset.theme;
   return t ? t === 'dark' : darkQuery.matches;
 };
-let currentTheme = null;
-/** Mermaid theme built from the page's own color tokens: thin outlines, mono type, no fills. */
-function initMermaid() {
-  const dark = isDark();
-  const key = dark ? 'dark' : 'light';
-  if (key === currentTheme) return false;
-  currentTheme = key;
-  const cs = getComputedStyle(document.documentElement);
-  const t = (n) => cs.getPropertyValue(n).trim();
-  const c = { paper: t('--paper'), ink: t('--ink'), graphite: t('--graphite'), line: t('--line'), strong: t('--line-strong') };
-  const font = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace';
-  mermaid.initialize({
-    startOnLoad: false, securityLevel: 'strict', theme: 'base', darkMode: dark, fontFamily: font,
-    flowchart: { htmlLabels: true, padding: 14, nodeSpacing: 56, rankSpacing: 56 },
-    themeVariables: {
-      darkMode: dark, background: c.paper, fontFamily: font, fontSize: '13px',
-      primaryColor: c.paper, primaryTextColor: c.ink, primaryBorderColor: c.strong,
-      secondaryColor: c.paper, secondaryTextColor: c.ink, secondaryBorderColor: c.strong,
-      tertiaryColor: c.paper, tertiaryTextColor: c.ink, tertiaryBorderColor: c.line,
-      mainBkg: c.paper, nodeBorder: c.strong, nodeTextColor: c.ink, textColor: c.ink, titleColor: c.ink,
-      lineColor: c.ink, clusterBkg: c.paper, clusterBorder: c.line, edgeLabelBackground: c.paper,
-      classText: c.ink, labelBackgroundColor: c.paper,
-      stateBkg: c.paper, stateBorder: c.strong, transitionColor: c.ink, transitionLabelColor: c.graphite,
-      specialStateColor: c.ink, innerEndBackground: c.ink, compositeBackground: c.paper,
-      compositeTitleBackground: c.paper, altBackground: c.paper, stateLabelColor: c.ink,
-      actorBkg: c.paper, actorBorder: c.strong, actorTextColor: c.ink, actorLineColor: c.line,
-      signalColor: c.ink, signalTextColor: c.ink, noteBkgColor: c.paper, noteBorderColor: c.line,
-      noteTextColor: c.graphite, activationBkgColor: c.paper, activationBorderColor: c.strong,
-      labelBoxBkgColor: c.paper, labelBoxBorderColor: c.line, labelTextColor: c.ink, loopTextColor: c.graphite,
-    },
-    themeCSS: `
-      .node rect, .node polygon, .node circle, .node ellipse, .node path, .cluster rect,
-      .statediagram-cluster rect, .classGroup rect, .divider, .actor { stroke-width: 1px !important; }
-      .flowchart-link, .transition, .relation { stroke-width: 1px !important; }
-      .edgeLabel, .edgeLabel p, .edgeLabel span { color: ${c.graphite} !important; font-size: 12px; }
-      .edgeLabel rect, .labelBkg { fill: ${c.paper} !important; background-color: ${c.paper} !important; }
-      .cluster-label span, .cluster-label p { color: ${c.ink}; font-weight: 500; }
-    `,
-  });
-  return true;
-}
-initMermaid();
-const rethemed = () => { if (initMermaid()) { renderedBody = null; refresh(srcEl.value); } };
+mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+let renderedDark = isDark();
+// Palettes have light and dark variants, so a theme switch re-renders.
+const rethemed = () => { if (isDark() !== renderedDark) { renderedBody = null; refresh(srcEl.value); } };
 darkQuery.addEventListener('change', rethemed);
 new MutationObserver(rethemed).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
@@ -1627,6 +1738,32 @@ exSel.addEventListener('change', () => {
   if (exSel.value === 'draft') return;
   const ex = EXAMPLES[+exSel.value];
   loadSource(ex.source, { resetHistory: true });
+});
+
+/* ---------- palettes ---------- */
+const paletteSel = $('palette');
+for (const [name, t] of Object.entries(THEMES)) paletteSel.add(new Option(t.label, name));
+paletteSel.value = DEFAULT_THEME;
+const fontsReady = new Map();
+/** Mermaid measures text when it lays out, so a palette's font must be loaded first. */
+function ensureFonts(name) {
+  const faces = THEMES[name]?.fonts || [];
+  if (!faces.length) return Promise.resolve();
+  if (!fontsReady.has(name)) {
+    fontsReady.set(name, Promise.race([
+      Promise.all(faces.map((f) => document.fonts.load(f))).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]));
+  }
+  return fontsReady.get(name);
+}
+paletteSel.addEventListener('change', () => {
+  if (!diagram) return;
+  overrides.settings = overrides.settings || {};
+  if (paletteSel.value === DEFAULT_THEME) delete overrides.settings.theme;
+  else overrides.settings.theme = paletteSel.value;
+  writeBack({ commit: true });
+  refresh(srcEl.value);
 });
 
 /* ---------- source ⇄ diagram ---------- */
@@ -1655,7 +1792,9 @@ async function loadSource(text, { resetHistory } = {}) {
 async function refresh(text) {
   const parsed = parseSource(text);
   store.set({ source: text, example: exSel.value });
-  if (diagram && parsed.body === renderedBody) {
+  const palette = parsed.overrides.settings.theme || DEFAULT_THEME;
+  const renderKey = `${parsed.body}\u0000${palette}\u0000${isDark()}`;
+  if (diagram && renderKey === renderedBody) {
     overrides = parsed.overrides;
     apply();
     showMessages(parsed.errors);
@@ -1676,7 +1815,8 @@ async function refresh(text) {
   sheet.append(staging);
   let next;
   try {
-    next = await wermaid.render(staging, text, { id: `wm-d${seq}` });
+    await ensureFonts(palette);
+    next = await wermaid.render(staging, text, { id: `wm-d${seq}`, theme: palette, dark: isDark() });
   } catch (err) {
     staging.remove();
     if (seq !== renderSeq) return;
@@ -1686,7 +1826,11 @@ async function refresh(text) {
   if (seq !== renderSeq) { staging.remove(); return; }
   for (const child of [...sheet.children]) if (child !== staging) child.remove();
   diagram = next;
-  renderedBody = parsed.body;
+  renderedBody = renderKey;
+  renderedDark = isDark();
+  $('palette').value = palette;
+  // The drawing sits on its palette's own ground (the page's paper for Wermaid).
+  wrap.style.setProperty('--sheet-bg', palette === DEFAULT_THEME ? 'transparent' : diagram.background || 'transparent');
   overrides = diagram.overrides;
   sheet.classList.toggle('editable', diagram.supported);
   addHitPaths();
@@ -1802,7 +1946,7 @@ function showWarnings() {
 }
 function updateBlockCount() {
   const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label || e.style).length
-    + (overrides.settings?.edges ? 1 : 0);
+    + (overrides.settings?.edges ? 1 : 0) + (overrides.settings?.theme ? 1 : 0);
   $('block-count').textContent = n ? `${n} override${n === 1 ? '' : 's'}` : 'no layout block';
   updateCaption(n);
 }
@@ -2328,7 +2472,8 @@ $('edge-style').addEventListener('change', (ev) => {
 $('reset-all').addEventListener('click', () => {
   if (!diagram || (!overrides.targets.size && !overrides.settings?.edges)) { toast('There are no overrides to clear'); return; }
   overrides.targets.clear();
-  overrides.settings = {};
+  // The palette is a choice of look, not a layout override, so it stays.
+  overrides.settings = overrides.settings?.theme ? { theme: overrides.settings.theme } : {};
   commit();
   toast('Overrides cleared. Undo brings them back.');
 });
@@ -2362,13 +2507,7 @@ $('copy-svg').addEventListener('click', () => {
 
 /* ---------- boot ---------- */
 updateUndoButtons();
-// Mermaid measures text when it lays out, so the diagram font must be ready first.
-try {
-  await Promise.race([
-    Promise.all(['400 13px "IBM Plex Mono"', '500 13px "IBM Plex Mono"'].map((f) => document.fonts.load(f))),
-    new Promise((resolve) => setTimeout(resolve, 2500)),
-  ]);
-} catch { /* render with the fallback font */ }
+
 const saved = store.get();
 if (saved?.source) {
   exSel.value = saved.example && exSel.querySelector(`option[value="${saved.example}"]`) ? saved.example : 'draft';

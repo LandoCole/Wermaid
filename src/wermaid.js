@@ -13,7 +13,10 @@
  * ignores it and draws the stock layout.
  */
 
-export const VERSION = '0.1.0';
+import { THEMES, DEFAULT_THEME, withTheme } from './themes.js';
+
+export { THEMES, DEFAULT_THEME, withTheme };
+export const VERSION = '0.3.0';
 
 /* ------------------------------------------------------------------ */
 /* Layout block: parse                                                 */
@@ -77,6 +80,10 @@ function parseBlockLines(blockLines, firstLineNo) {
           if (!/^\d+(\.\d+)?$/.test(radius)) errors.push({ line: lineNo, message: `@edges radius must be a number — got "${radius}"` });
           else overrides.settings.edges.radius = +radius;
         }
+      } else if (name === 'theme') {
+        const [theme] = args;
+        if (!THEMES[theme]) errors.push({ line: lineNo, message: `@theme expects ${Object.keys(THEMES).join(', ')} — got "${theme ?? ''}"` });
+        else overrides.settings.theme = theme;
       } else {
         errors.push({ line: lineNo, message: `unknown setting "@${name}"` });
       }
@@ -181,7 +188,8 @@ function entryOps(e) {
 export function serializeBlock(overrides, scene) {
   const entries = [...overrides.targets.values()].filter((e) => entryOps(e));
   const edgesSetting = overrides.settings?.edges;
-  if (!entries.length && !overrides.comments.length && !edgesSetting) return '';
+  const themeSetting = overrides.settings?.theme;
+  if (!entries.length && !overrides.comments.length && !edgesSetting && !themeSetting) return '';
   const order = new Map();
   if (scene) {
     let i = 0;
@@ -194,6 +202,7 @@ export function serializeBlock(overrides, scene) {
   const label = (e) => (e.kind === 'edge' ? edgeSelector(e, scene) : e.selector);
   const width = Math.max(4, ...entries.map((e) => label(e).length));
   const out = ['%% @layout v1'];
+  if (themeSetting) out.push(`%% @theme ${themeSetting}`);
   if (edgesSetting) out.push(`%% @edges ${edgesSetting.style}${edgesSetting.radius !== undefined ? ` ${r1(edgesSetting.radius)}` : ''}`);
   for (const c of overrides.comments) out.push(`%% ${c}`);
   for (const e of entries) out.push(`%% ${label(e).padEnd(width)}  ${entryOps(e)}`);
@@ -889,7 +898,8 @@ function readScene(svg, svgId, data, direction) {
     const labelInner = svg.querySelector(`g.edgeLabel > g.label[data-id="${cssId(e.id)}"]`);
     const labelEl = labelInner?.parentElement || null;
     let labelBox = null;
-    if (labelEl) {
+    // Edges without text still get a small label chip; only labels with text count.
+    if (labelEl && labelEl.textContent.trim()) {
       const b = labelEl.getBBox();
       if (b.width > 0 && b.height > 0) labelBox = bboxInRoot(root, labelEl);
     }
@@ -1194,17 +1204,24 @@ let counter = 0;
  *   diagram.setOverrides(overrides);   // re-apply without re-running Mermaid
  */
 export function createWermaid(mermaid) {
-  async function render(container, source, { id } = {}) {
+  /**
+   * Render `source` into `container`.
+   * Options: `id` (SVG id), `theme` (palette name; defaults to the block's `@theme`,
+   * else Mermaid's own config), `dark` (use the palette's dark variant).
+   */
+  async function render(container, source, { id, theme, dark = false } = {}) {
     const parsed = parseSource(source);
     const svgId = id || `wm-${++counter}`;
-    const { svg: svgText, bindFunctions } = await mermaid.render(svgId, parsed.body);
+    const themeName = theme ?? parsed.overrides.settings.theme ?? null;
+    const body = themeName ? withTheme(parsed.body, themeName, { dark, el: container }) : parsed.body;
+    const { svg: svgText, bindFunctions } = await mermaid.render(svgId, body);
     container.innerHTML = svgText;
     const svg = container.querySelector('svg');
     bindFunctions?.(container);
 
     let data = null, type = null, direction = null, curve = 'basis';
     try {
-      const diag = await mermaid.mermaidAPI.getDiagramFromText(parsed.body);
+      const diag = await mermaid.mermaidAPI.getDiagramFromText(body);
       type = diag.type;
       if (typeof diag.db.getData === 'function') {
         data = diag.db.getData();
@@ -1226,6 +1243,8 @@ export function createWermaid(mermaid) {
 
     const diagram = {
       svg, svgId, type, supported, scene,
+      theme: themeName,
+      background: themeName ? THEMES[themeName]?.background(dark, container) ?? null : null,
       parseErrors: parsed.errors,
       get overrides() { return overrides; },
       get geometry() { return geom; },
@@ -1253,7 +1272,7 @@ export function createWermaid(mermaid) {
     return diagram;
   }
 
-  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, VERSION };
+  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, THEMES, VERSION };
 }
 
 export default createWermaid;
