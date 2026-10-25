@@ -91,6 +91,9 @@ exist produce warnings and are ignored.
 - Arrow keys nudge, Delete resets the selection, Ctrl/⌘ Z undoes.
 - "Edges" in the diagram header sets the look for every edge; a selected edge has its own style picker.
 - "Palette" switches between Mermaid, Wermaid and Pele, and follows the page's light/dark mode.
+- "Export" copies the diagram as PNG or SVG, or saves it as PNG (2x), SVG, or Markdown (the source
+  in a ```mermaid fence, layout block included, ready for a README). Inside Claude, saving goes
+  through the viewer's save prompt.
 - "Stock" shows Mermaid's own layout for comparison.
 
 Diagrams render with Mermaid's `base` theme driven by the page's color tokens: thin outlines,

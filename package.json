@@ -15,7 +15,7 @@
     "build": "node build.mjs",
     "serve": "node test/serve.mjs . 8765",
     "link-mermaid": "ln -sfn node_modules/mermaid/dist mermaid-dist",
-    "test": "node test/run.mjs test/m1.html && node test/interact.mjs"
+    "test": "node test/run.mjs test/m1.html && node test/interact.mjs && node test/export.mjs"
   },
   "peerDependencies": {
     "mermaid": "^11.0.0"

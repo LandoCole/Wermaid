@@ -32,6 +32,7 @@
   }
 
   html, body { height: 100%; }
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--paper); color: var(--ink);
     font-family: var(--mono); font-size: 13px; line-height: 1.5;
@@ -173,6 +174,18 @@
   }
   .figcap .coords { font-variant-numeric: tabular-nums; }
 
+  .menu-wrap { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 220px;
+    display: grid; padding: 4px 0; background: var(--paper); border: 1px solid var(--line-strong);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08); text-transform: none; letter-spacing: 0;
+  }
+  .menu button {
+    background: none; border: 0; text-align: left; padding: 8px 14px; cursor: pointer; color: var(--ink);
+    font: inherit; font-size: 12px; letter-spacing: 0.04em;
+  }
+  .menu button:hover, .menu button:focus-visible { background: var(--wash); outline: none; }
+  .menu-sep { height: 1px; margin: 4px 0; background: var(--line); }
   .toast {
     position: fixed; right: var(--gutter-r); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     background: var(--ink); color: var(--paper); padding: 8px 12px; font-size: 12px;
@@ -201,7 +214,17 @@
     <button id="redo" class="text-btn" type="button" title="Shift Ctrl/⌘ Z">Redo</button>
     <button id="reset-all" class="text-btn" type="button">Clear overrides</button>
     <button id="copy-src" class="text-btn" type="button">Copy source</button>
-    <button id="copy-svg" class="text-btn" type="button">Copy SVG</button>
+    <div class="menu-wrap">
+      <button id="export-btn" class="text-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="export-menu">Export ▾</button>
+      <div id="export-menu" class="menu" role="menu" aria-label="Export" hidden>
+        <button type="button" role="menuitem" data-export="copy-png">Copy as PNG</button>
+        <button type="button" role="menuitem" data-export="copy-svg">Copy as SVG</button>
+        <div class="menu-sep" role="separator"></div>
+        <button type="button" role="menuitem" data-export="save-png">Save as PNG…</button>
+        <button type="button" role="menuitem" data-export="save-svg">Save as SVG…</button>
+        <button type="button" role="menuitem" data-export="save-md">Save as Markdown…</button>
+      </div>
+    </div>
   </nav>
 </header>
 
@@ -2603,23 +2626,135 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('on'), 1800);
 }
-async function copyText(text, done) {
+async function copyText(text, done, { selectSource = false } = {}) {
   try {
     await navigator.clipboard.writeText(text);
     toast(done);
   } catch {
-    srcEl.focus();
-    srcEl.select();
-    toast('Copy was blocked. The source is selected so you can copy it yourself.');
+    if (selectSource) {
+      srcEl.focus();
+      srcEl.select();
+      toast('Copy was blocked. The source is selected so you can copy it yourself.');
+    } else {
+      toast('Copy was blocked here. Use Save instead.');
+    }
   }
 }
-$('copy-src').addEventListener('click', () => copyText(srcEl.value, 'Source copied'));
-$('copy-svg').addEventListener('click', () => {
-  if (!diagram) return;
+$('copy-src').addEventListener('click', () => copyText(srcEl.value, 'Source copied', { selectSource: true }));
+
+/* ---------- export ---------- */
+const slug = () => exampleName().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
+
+/** The diagram as a standalone SVG document, without editor overlays. */
+function exportSvg() {
   const clone = diagram.svg.cloneNode(true);
   clone.querySelectorAll('.wm-overlay, .wm-hit').forEach((n) => n.remove());
-  clone.removeAttribute('width'); clone.removeAttribute('height');
-  copyText(clone.outerHTML, 'SVG copied');
+  const vb = diagram.svg.viewBox.baseVal;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(Math.ceil(vb.width)));
+  clone.setAttribute('height', String(Math.ceil(vb.height)));
+  clone.style.removeProperty('max-width');
+  return { text: new XMLSerializer().serializeToString(clone), width: vb.width, height: vb.height };
+}
+
+/** What the drawing sits on: the palette's ground, else the page's paper. */
+function exportBackground() {
+  const sheetBg = getComputedStyle(wrap).backgroundColor;
+  return sheetBg && sheetBg !== 'rgba(0, 0, 0, 0)' && sheetBg !== 'transparent'
+    ? sheetBg : getComputedStyle(document.body).backgroundColor;
+}
+
+/** Draw the SVG onto a canvas at 2x and return a PNG blob. */
+async function exportPng(scale = 2) {
+  const { text, width, height } = exportSvg();
+  const img = new Image();
+  // A data URL (not a blob URL) keeps the canvas exportable when labels are HTML.
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(width * scale);
+  canvas.height = Math.ceil(height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = exportBackground();
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => {
+    try { canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('empty'))), 'image/png'); }
+    catch (err) { reject(err); }
+  });
+}
+
+/** Offer a file: through the viewer's save prompt inside Claude, a plain download elsewhere. */
+async function saveFile(filename, data) {
+  const framed = window.top !== window;
+  const downloads = window.claude?.use ? await window.claude.use('downloads') : null;
+  if (downloads) {
+    try {
+      await downloads.save({ filename, data });
+      toast(`Saved ${filename}`);
+    } catch (err) {
+      if (err?.code === 'declined') return;
+      toast(err?.code === 'rate_limited' ? 'A save is already waiting for an answer.' : 'Saving isn’t available here.');
+    }
+    return;
+  }
+  if (framed) { toast('Saving isn’t available here. Copy instead.'); return; }
+  const url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data]));
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast(`Saved ${filename}`);
+}
+
+async function runExport(kind) {
+  if (!diagram) return;
+  try {
+    if (kind === 'copy-svg') {
+      await copyText(exportSvg().text, 'SVG copied');
+    } else if (kind === 'copy-png') {
+      if (!window.ClipboardItem || !navigator.clipboard?.write) { toast('This browser can’t copy images. Use Save as PNG.'); return; }
+      // Hand the clipboard a promise so the copy still counts as part of the click.
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': exportPng() })]);
+      toast('PNG copied');
+    } else if (kind === 'save-png') {
+      await saveFile(`${slug()}.png`, await exportPng());
+    } else if (kind === 'save-svg') {
+      await saveFile(`${slug()}.svg`, new Blob([exportSvg().text], { type: 'image/svg+xml' }));
+    } else if (kind === 'save-md') {
+      const md = `# ${exampleName()}\n\n\`\`\`mermaid\n${srcEl.value.replace(/\s+$/, '')}\n\`\`\`\n`;
+      await saveFile(`${slug()}.md`, md);
+    }
+  } catch (err) {
+    toast(err?.name === 'SecurityError'
+      ? 'This browser won’t turn these labels into an image. Try Chrome, or use SVG.'
+      : kind === 'copy-png' ? 'Copy was blocked here. Use Save as PNG.' : 'Export failed. Try again.');
+  }
+}
+
+const exportBtn = $('export-btn'), exportMenu = $('export-menu');
+function setMenu(open) {
+  exportMenu.hidden = !open;
+  exportBtn.setAttribute('aria-expanded', String(open));
+  if (open) exportMenu.querySelector('button')?.focus();
+}
+exportBtn.addEventListener('click', () => setMenu(exportMenu.hidden));
+exportMenu.addEventListener('click', (ev) => {
+  const item = ev.target.closest('[data-export]');
+  if (!item) return;
+  setMenu(false);
+  runExport(item.dataset.export);
+});
+exportMenu.addEventListener('keydown', (ev) => {
+  const items = [...exportMenu.querySelectorAll('button')];
+  const i = items.indexOf(document.activeElement);
+  if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(i + 1) % items.length].focus(); }
+  if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+  if (ev.key === 'Escape') { setMenu(false); exportBtn.focus(); }
+});
+document.addEventListener('pointerdown', (ev) => {
+  if (!exportMenu.hidden && !ev.target.closest('.menu-wrap')) setMenu(false);
 });
 
 /* ---------- boot ---------- */
