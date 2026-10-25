@@ -25,9 +25,23 @@ const box = await (await p.$(el('canvas'))).boundingBox();
 ok('pannable viewer has the requested height', Math.abs(box.height - 360) < 1, box.height);
 ok('toolbar shows zoom and export', await p.$eval(el('canvas'), (e) => !e.shadowRoot.querySelector('.toolbar').hidden && !e.shadowRoot.querySelector('.zoomers').hidden));
 const t0 = await t();
-await p.mouse.move(box.x + 60, box.y + box.height - 30); await p.mouse.down(); await p.mouse.move(box.x + 160, box.y + box.height - 90, { steps: 8 }); await p.mouse.up();
+await p.mouse.move(box.x + 60, box.y + box.height - 30); await p.mouse.down(); await p.mouse.move(box.x + 160, box.y + box.height - 50, { steps: 8 }); await p.mouse.up();
 const t1 = await t();
-ok('drag pans the canvas', Math.abs(t1[0] - t0[0] - 100) < 2 && Math.abs(t1[1] - t0[1] + 60) < 2, [t0, t1]);
+ok('drag pans the canvas', Math.abs(t1[0] - t0[0] - 100) < 2 && Math.abs(t1[1] - t0[1] + 20) < 2, [t0, t1]);
+// The canvas ends a little past the diagram: flinging it away leaves it on screen.
+const onScreen = () => p.$eval(el('canvas'), (e) => {
+  const v = e.shadowRoot.querySelector('.viewport').getBoundingClientRect(), d = e.diagram.svg.getBoundingClientRect();
+  return { left: d.left - v.left, top: d.top - v.top, right: v.right - d.right, bottom: v.bottom - d.bottom, vw: v.width, vh: v.height };
+});
+// Either wholly in view, or no more than a quarter of the viewport (or the toolbar inset) left empty past each edge.
+const fine = (a, b, view) => (a >= -1 && b >= -1) || (a <= Math.max(48, view * 0.25) + 1 && b <= Math.max(48, view * 0.25) + 1);
+for (const [dx, dy] of [[-3000, -3000], [3000, 3000]]) {
+  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.down();
+  await p.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 6 }); await p.mouse.up();
+  const s = await onScreen();
+  ok(`flinging ${dx > 0 ? 'right/down' : 'left/up'} stops at the canvas edge`, fine(s.left, s.right, s.vw) && fine(s.top, s.bottom, s.vh), s);
+}
+await p.$eval(el('canvas'), (e) => e.fit());
 const zoomBtn = await p.evaluateHandle(() => document.querySelector('#canvas').shadowRoot.querySelector('[data-act="in"]'));
 await zoomBtn.click(); await p.waitForTimeout(50);
 const t2 = await t();

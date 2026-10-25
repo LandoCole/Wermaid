@@ -437,6 +437,35 @@ function withTheme(body, name, { dark = false, el = null } = {}) {
 const VERSION = '0.3.0';
 
 /* ------------------------------------------------------------------ */
+/* Viewer bounds                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Keep a panned diagram on screen. The canvas is the diagram plus a margin, so the view can't
+ * drift into empty space:
+ * - a diagram smaller than the viewport stays wholly inside it (within `inset`);
+ * - a larger one can be panned until its edge is `overscroll` of the viewport past the
+ *   viewport's edge, and no further.
+ * Between the two the limits blend continuously, so crossing from one to the other never jumps.
+ *
+ * `pos` is the diagram's top-left corner in viewport pixels, `size` its drawn size,
+ * `viewport` the viewport's size, `inset` {top, right, bottom, left} in pixels (room for toolbars).
+ */
+function clampView(pos, size, viewport, { inset = {}, overscroll = 0.25 } = {}) {
+  const { top = 16, right = 16, bottom = 16, left = 16 } = inset;
+  const axis = (p, s, v, lead, trail) => {
+    if (!(v > 0) || !(s > 0)) return p;
+    const lo = Math.min(lead, v - Math.max(trail, v * overscroll) - s);
+    const hi = Math.max(Math.max(lead, v * overscroll), v - trail - s);
+    return Math.min(hi, Math.max(lo, p));
+  };
+  return {
+    x: axis(pos.x, size.width, viewport.width, left, right),
+    y: axis(pos.y, size.height, viewport.height, top, bottom),
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Layout block: parse                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -2045,6 +2074,17 @@ const view = { x: 0, y: 0 };
 let lastVB = null;
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
 function applyView() {
+  // The canvas ends a little past the diagram, so panning can't lose it off screen. Not while a
+  // shape is being dragged: the diagram grows under the pointer, and moving the view then would
+  // feed back into the drag. The drag's last apply() clamps.
+  const svg = diagram?.svg;
+  if (svg && !drag) {
+    const vb = svg.viewBox.baseVal, narrow = wrap.clientWidth < 600;
+    const side = narrow ? 16 : 32;
+    Object.assign(view, clampView(view, { width: vb.width * zoom, height: vb.height * zoom },
+      { width: wrap.clientWidth, height: wrap.clientHeight },
+      { inset: { top: narrow ? 84 : 48, right: side, bottom: side, left: side } }));
+  }
   sheet.style.transform = `translate(${Math.round(view.x * 10) / 10}px, ${Math.round(view.y * 10) / 10}px)`;
 }
 function sizeSvg() {
@@ -2089,6 +2129,7 @@ function fitToSheet({ max = 1.5 } = {}) {
   drawOverlay();
 }
 $('zoom-fit').addEventListener('click', () => fitToSheet());
+new ResizeObserver(() => { if (diagram) { applyView(); drawOverlay(); } }).observe(wrap);
 
 /* Wheel: two-finger scroll or the mouse wheel pans; pinch or Ctrl/⌘ + wheel zooms at the cursor. */
 wrap.addEventListener('wheel', (ev) => {

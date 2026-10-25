@@ -25,7 +25,7 @@
  * Property `rendered` is a promise for the latest render; `diagram` is the latest result.
  */
 
-import { createWermaid, parseSource, THEMES, DEFAULT_THEME } from './wermaid.js';
+import { createWermaid, parseSource, THEMES, DEFAULT_THEME, clampView } from './wermaid.js';
 
 const FONT_HREF = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap';
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
@@ -192,7 +192,10 @@ export class WermaidDiagram extends HTMLElement {
     }
     this._observer.observe(this, { childList: true, characterData: true, subtree: true });
     if (!this._sizeObserver) {
-      this._sizeObserver = new ResizeObserver(() => { if (this._autoFit) this._fit(); });
+      this._sizeObserver = new ResizeObserver(() => {
+        if (!this.hasAttribute('pannable')) return;
+        if (this._autoFit) this._fit(); else this._sizeSvg();
+      });
     }
     this._sizeObserver.observe(this.$.viewport);
     this._applyChrome();
@@ -323,6 +326,12 @@ export class WermaidDiagram extends HTMLElement {
       v.y += (vb.y - this._lastVB.y) * v.zoom;
     }
     this._lastVB = { x: vb.x, y: vb.y };
+    if (this.hasAttribute('pannable')) {
+      // The canvas ends a little past the diagram: panning can't lose it off screen.
+      const W = this.$.viewport.clientWidth, H = this.$.viewport.clientHeight;
+      const top = this.hasAttribute('controls') ? 44 : 16;
+      Object.assign(v, clampView(v, { width: vb.width * v.zoom, height: vb.height * v.zoom }, { width: W, height: H }, { inset: { top } }));
+    }
     svg.style.maxWidth = 'none';
     svg.setAttribute('width', String(Math.round(vb.width * v.zoom)));
     svg.setAttribute('height', String(Math.round(vb.height * v.zoom)));

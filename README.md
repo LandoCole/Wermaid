@@ -85,9 +85,11 @@ exist produce warnings and are ignored.
   selection bar converts between the two without moving the shape.
 - Drag a corner to resize, a line to add a bend (double-click a bend to remove it), an edge label
   to offset it, a subgraph's frame to move everything inside.
-- The diagram sits on an open canvas: press and hold the background (or the middle mouse button anywhere)
-  to pan in any direction; scroll or two-finger swipe also pans; pinch or Ctrl/⌘ + scroll zooms at the
+- The diagram sits on a canvas a little larger than itself: press and hold the background (or the middle
+  mouse button anywhere) to pan in any direction; scroll or two-finger swipe also pans; pinch or Ctrl/⌘ + scroll zooms at the
   pointer; Fit centres the diagram. On touch screens, one finger pans and two pinch.
+  Panning stops at the canvas edge, so the diagram can't be lost: one that fits stays in view, and a
+  bigger one can be panned until at most a quarter of the viewport is empty past its edge.
 - Arrow keys nudge, Delete resets the selection, Ctrl/⌘ Z undoes.
 - "Edges" in the diagram header sets the look for every edge; a selected edge has its own style picker.
 - "Palette" switches between Mermaid, Wermaid and Pele, and follows the page's light/dark mode.
@@ -130,7 +132,7 @@ With npm: `import { defineWermaidElement, run } from 'wermaid/element'`.
 |---|---|---|
 | `theme` | `mermaid`, `wermaid`, `pele`, `none` | Palette. Default: the block's `@theme`, else `wermaid`. `none` leaves the page's Mermaid config alone. |
 | `dark` | `auto`, `true`, `false` | `auto` (default) follows `prefers-color-scheme` and re-renders when it changes. |
-| `pannable` | present | A fixed-height canvas: drag to pan, pinch or Ctrl/⌘ + scroll to zoom, double-click to fit. Plain scrolling still scrolls the page. |
+| `pannable` | present | A fixed-height canvas: drag to pan, pinch or Ctrl/⌘ + scroll to zoom, double-click to fit. Panning stops at the canvas edge (as in the editor). Plain scrolling still scrolls the page. |
 | `controls` | present | Toolbar with zoom and Fit (when pannable) and Export: copy or save PNG/SVG. |
 | `height` | CSS length or px number | Canvas height when pannable (default 420px). |
 | `background` | `palette`, `none`, a colour | Fill behind the diagram. Default `none` inline, `palette` when pannable. |

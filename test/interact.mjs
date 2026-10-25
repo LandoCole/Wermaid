@@ -137,6 +137,21 @@ const nb = await p.evaluate(() => { const n = document.querySelector('#sheet [id
 await drag(nb, { x: nb.x + 50, y: nb.y + 30 });
 const nb2 = await p.evaluate(() => { const n = document.querySelector('#sheet [id*="-flowchart-fs-"]'); const r = n.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
 ok('node follows the pointer on a panned, zoomed canvas', Math.abs(nb2.x - nb.x - 50) < 8 && Math.abs(nb2.y - nb.y - 30) < 8, [nb, nb2]);
+// 11e. the canvas ends a little past the diagram: flinging it away leaves it on screen
+const edges = () => p.evaluate(() => {
+  const v = document.getElementById('sheet-wrap').getBoundingClientRect(), d = document.querySelector('#sheet svg').getBoundingClientRect();
+  return { left: d.left - v.left, top: d.top - v.top, right: v.right - d.right, bottom: v.bottom - d.bottom, vw: v.width, vh: v.height };
+});
+// Either wholly in view, or no more than a quarter of the viewport (or the toolbar inset) left empty past each edge.
+const fine = (a, b, view) => (a >= -1 && b >= -1) || (a <= Math.max(48, view * 0.25) + 1 && b <= Math.max(48, view * 0.25) + 1);
+for (const [dx, dy, name] of [[-4000, -4000, 'left/up'], [4000, 4000, 'right/down']]) {
+  await p.mouse.move(wb.x + wb.width / 2, wb.y + wb.height / 2);
+  for (let i = 0; i < 8; i++) { await p.mouse.wheel(-dx / 8, -dy / 8); }
+  await p.waitForTimeout(100);
+  const s = await edges();
+  ok(`wheel-flinging ${name} stops at the canvas edge`, fine(s.left, s.right, s.vw) && fine(s.top, s.bottom, s.vh), s);
+}
+await p.click('#zoom-fit'); await p.waitForTimeout(100);
 // 12. switch examples
 for (const v of ['1', '2', '3', '4']) {
   await p.selectOption('#example', v); await p.waitForTimeout(900);

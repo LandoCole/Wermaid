@@ -19,6 +19,35 @@ export { THEMES, DEFAULT_THEME, withTheme };
 export const VERSION = '0.3.0';
 
 /* ------------------------------------------------------------------ */
+/* Viewer bounds                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Keep a panned diagram on screen. The canvas is the diagram plus a margin, so the view can't
+ * drift into empty space:
+ * - a diagram smaller than the viewport stays wholly inside it (within `inset`);
+ * - a larger one can be panned until its edge is `overscroll` of the viewport past the
+ *   viewport's edge, and no further.
+ * Between the two the limits blend continuously, so crossing from one to the other never jumps.
+ *
+ * `pos` is the diagram's top-left corner in viewport pixels, `size` its drawn size,
+ * `viewport` the viewport's size, `inset` {top, right, bottom, left} in pixels (room for toolbars).
+ */
+export function clampView(pos, size, viewport, { inset = {}, overscroll = 0.25 } = {}) {
+  const { top = 16, right = 16, bottom = 16, left = 16 } = inset;
+  const axis = (p, s, v, lead, trail) => {
+    if (!(v > 0) || !(s > 0)) return p;
+    const lo = Math.min(lead, v - Math.max(trail, v * overscroll) - s);
+    const hi = Math.max(Math.max(lead, v * overscroll), v - trail - s);
+    return Math.min(hi, Math.max(lo, p));
+  };
+  return {
+    x: axis(pos.x, size.width, viewport.width, left, right),
+    y: axis(pos.y, size.height, viewport.height, top, bottom),
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Layout block: parse                                                 */
 /* ------------------------------------------------------------------ */
 
