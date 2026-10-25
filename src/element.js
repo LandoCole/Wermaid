@@ -466,7 +466,7 @@ export class WermaidDiagram extends HTMLElement {
   async _export(kind) {
     const d = this._diagram;
     if (!d) return;
-    const name = (this.getAttribute('name') || d.overrides?.settings?.title || d.type || 'diagram').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
+    const name = (this.getAttribute('name') || d.overrides?.settings?.title || 'my-wermaid').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
     const background = d.background || getComputedStyle(this).backgroundColor || '#ffffff';
     try {
       if (kind === 'copy-svg') {

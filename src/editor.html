@@ -382,6 +382,8 @@ srcEl.addEventListener('input', () => {
     pushUndo(lastCommitted);
     lastCommitted = srcEl.value;
     exSel.value = 'draft';
+    showName();
+    if (!srcEl.value.trim()) $('figcap').textContent = `Fig. 1 · ${exampleName()}, empty`;
     refresh(srcEl.value);
   }, 280);
 });
@@ -857,17 +859,25 @@ function showCoords(p) {
   $('coords').textContent = p ? `x ${Math.round(p.x)}  y ${Math.round(p.y)}` : '';
 }
 
-/** The example's own name, used when the source has no `@title`. */
+/** The name a diagram has without an `@title`: the example's own, else `my-wermaid`. */
+const DEFAULT_NAME = 'my-wermaid';
 function defaultName() {
-  return exSel.value === 'draft' ? 'Your draft' : exSel.selectedOptions[0]?.textContent || 'Diagram';
+  return exSel.value === 'draft' ? DEFAULT_NAME : exSel.selectedOptions[0]?.textContent || DEFAULT_NAME;
 }
-/** The diagram's name: the layout block's `@title`, else the example's. Names exported files. */
+/**
+ * The diagram's name: the layout block's `@title`, else the default. Names exported files.
+ * Read from the source text, so clearing or editing the source updates it even before a render.
+ */
 function exampleName() {
-  return overrides?.settings?.title || defaultName();
+  return parseSource(srcEl.value).overrides.settings.title || defaultName();
+}
+/** Show the current name, unless the person is typing one. */
+function showName() {
+  if (document.activeElement !== $('title')) $('title').textContent = exampleName();
 }
 function updateCaption(count) {
   const name = exampleName();
-  if (document.activeElement !== $('title')) $('title').textContent = name;
+  showName();
   const state = showStock ? 'stock layout' : count ? `with ${count} override${count === 1 ? '' : 's'}` : 'auto layout';
   $('figcap').textContent = `Fig. 1 · ${name}, ${state}`;
 }
@@ -1210,6 +1220,7 @@ titleEl.addEventListener('blur', () => {
   if (!name || name === defaultName()) delete overrides.settings.title;
   else overrides.settings.title = name;
   commit();
+  updateBlockCount(); // the caption was drawn before the source carried the new name
   titleEl.textContent = exampleName();
 });
 // Pasting rich text keeps only its words.

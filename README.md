@@ -93,7 +93,8 @@ exist produce warnings and are ignored.
   bigger one can be panned until at most a quarter of the viewport is empty past its edge.
 - Arrow keys nudge, Delete resets the selection, Ctrl/⌘ Z undoes.
 - Click the title to rename the diagram (Enter saves, Escape cancels, empty goes back to the example's
-  name). The name is stored as `%% @title` in the layout block and names exported files.
+  name). A diagram that isn't an untouched example, including one typed into a cleared source, is
+  called `my-wermaid` until renamed. The name is stored as `%% @title` in the layout block and names exported files.
 - "Edges" in the diagram header sets the look for every edge; a selected edge has its own style picker.
 - "Palette" switches between Mermaid, Wermaid and Pele, and follows the page's light/dark mode.
 - "Export" copies the diagram as PNG or SVG, or saves it as PNG (2x), SVG, or Markdown (the source
@@ -140,7 +141,7 @@ With npm: `import { defineWermaidElement, run } from 'wermaid/element'`.
 | `height` | CSS length or px number | Canvas height when pannable (default 420px). |
 | `background` | `palette`, `none`, a colour | Fill behind the diagram. Default `none` inline, `palette` when pannable. |
 | `src` | URL | Load the source from a `.mmd` / text file instead of the element's text. |
-| `name` | text | File name for exports. Default: the block's `@title`, else the diagram type. |
+| `name` | text | File name for exports. Default: the block's `@title`, else `my-wermaid`. |
 
 The source can be the element's text (indented freely, `<br/>` and entities work as in
 Mermaid), the `source` property, or `src`. Changing any of them re-renders.

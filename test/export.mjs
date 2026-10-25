@@ -66,6 +66,18 @@ ok('undo restores the name', (await p.textContent('#title')) === 'Checkout flow 
 await p.click('#title'); await p.keyboard.press('ControlOrMeta+A'); await p.keyboard.press('Backspace'); await p.keyboard.press('Enter');
 await p.waitForTimeout(300);
 
+// Clearing the example clears its name too; a new diagram is called my-wermaid until renamed.
+await p.click('#title'); await p.keyboard.press('ControlOrMeta+A'); await p.keyboard.type('Renamed pipeline'); await p.keyboard.press('Enter');
+await p.waitForTimeout(300);
+await p.click('#src'); await p.keyboard.press('ControlOrMeta+A'); await p.keyboard.press('Backspace');
+await p.waitForTimeout(500);
+ok('clearing the source resets the name to my-wermaid', (await p.textContent('#title')) === 'my-wermaid', await p.textContent('#title'));
+await p.keyboard.type('flowchart LR\n  A --> B\n'); await p.waitForTimeout(1200);
+const fresh = await download('save-png');
+ok('a new diagram exports as my-wermaid', (await p.textContent('#title')) === 'my-wermaid' && fresh.name === 'my-wermaid.png', [await p.textContent('#title'), fresh.name]);
+await p.selectOption('#example', '0'); await p.waitForTimeout(1200);
+ok('picking an example again shows its name', (await p.textContent('#title')) === 'Order pipeline', await p.textContent('#title'));
+
 // dark palette + pele background flows into the PNG
 
 console.log(R.join('\n'));
