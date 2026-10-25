@@ -20,6 +20,14 @@ ok('inline svg is responsive', await p.$eval(el('inline'), (e) => e.diagram.svg.
 const fill = (id) => p.$eval(el(id), (e) => getComputedStyle(e.diagram.svg.querySelector('g.node .label-container')).fill);
 ok('theme="pele" uses the Pele palette', (await fill('pele')) === 'rgb(242, 240, 229)', await fill('pele'));
 ok('default palette is Wermaid', (await fill('inline')) === 'rgb(249, 249, 247)', await fill('inline'));
+// 2b. which theme a diagram uses
+ok('block @theme beats the theme attribute', await p.$eval('#attr-vs-block', (e) => e.diagram.theme) === 'mermaid');
+ok('theme attribute applies when the block names none', await p.$eval('#pele', (e) => e.diagram.theme) === 'pele');
+ok('page default theme applies last', await p.$eval('#page-default', (e) => e.diagram.theme) === 'acme');
+ok('theme stylesheet loaded once', await p.$$eval('link[data-wermaid-theme="acme"]', (l) => l.length) === 1);
+ok('an unknown attribute falls through to the page default, with a warning', await p.$eval('#attr-unknown', (e) => e.diagram.theme === 'acme' && e.diagram.warnings.some((w) => w.includes('"nope"'))));
+ok('theme="none" renders with no palette', await p.$eval('#theme-none', (e) => e.diagram.theme === null || e.diagram.theme === undefined), await p.$eval('#theme-none', (e) => e.diagram.theme));
+ok('element re-exports listThemes', await p.evaluate(() => listThemes().some((t) => t.name === 'acme')));
 // 3. canvas viewer
 const t = () => p.$eval(el('canvas'), (e) => { const m = new DOMMatrix(getComputedStyle(e.shadowRoot.querySelector('.stage')).transform); return [m.e, m.f, e.shadowRoot.querySelector('output').textContent]; });
 const box = await (await p.$(el('canvas'))).boundingBox();

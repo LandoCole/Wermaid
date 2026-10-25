@@ -11,8 +11,10 @@
  * Source comes from the element's text, its `source` property, or a `src` URL.
  *
  * Attributes
- *   theme      mermaid | wermaid | pele | none   (default: the block's @theme, else wermaid;
- *              none = leave Mermaid's own config alone)
+ *   theme      a theme name (mermaid, wermaid, pele or one from defineTheme) | none
+ *              The diagram's own `%% @theme` wins; this is the starting theme for diagrams that
+ *              name none. Then the page default (defineWermaidElement's `defaults.theme`),
+ *              then wermaid. none = leave Mermaid's own config alone.
  *   dark       auto | true | false               (default auto: follows prefers-color-scheme)
  *   pannable   present = a canvas viewer: drag to pan, pinch or Ctrl/⌘ + scroll to zoom,
  *              double-click to fit
@@ -25,7 +27,9 @@
  * Property `rendered` is a promise for the latest render; `diagram` is the latest result.
  */
 
-import { createWermaid, parseSource, THEMES, DEFAULT_THEME, clampView } from './wermaid.js';
+import { createWermaid, parseSource, DEFAULT_THEME, clampView, defineTheme, listThemes, getTheme } from './wermaid.js';
+
+export { defineTheme, listThemes };
 
 const FONT_HREF = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap';
 const MIN_ZOOM = 0.1, MAX_ZOOM = 4;
@@ -34,17 +38,21 @@ let engine = null;
 let options = { fonts: true, tag: 'wermaid-diagram' };
 let queue = Promise.resolve();
 let renderCount = 0;
+// Page-wide settings from defineWermaidElement's `defaults`: { theme?, features?, formats?, persist? }.
+let pageDefaults = {};
 
 /**
  * Register the element. Call once, with the Mermaid instance (v11+) to render with.
  * Options: `tag` (element name), `fonts` (load IBM Plex Mono from Google Fonts for the
- * Wermaid palette; default true), `config` (extra Mermaid config).
+ * Wermaid palette; default true), `config` (extra Mermaid config), `defaults` (page-wide
+ * settings for every diagram: `theme`, `features`, `formats`, `persist`).
  */
-export function defineWermaidElement(mermaid, { tag = 'wermaid-diagram', fonts = true, config = {} } = {}) {
+export function defineWermaidElement(mermaid, { tag = 'wermaid-diagram', fonts = true, config = {}, defaults = {} } = {}) {
   // Wermaid renders the blocks itself, so Mermaid must not also auto-render them.
   mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', ...config });
   engine = createWermaid(mermaid);
   options = { tag, fonts };
+  pageDefaults = { ...defaults };
   if (!customElements.get(tag)) customElements.define(tag, class extends WermaidDiagram {});
   return customElements.get(tag);
 }
@@ -144,17 +152,33 @@ const TEMPLATE = `
 const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
 let fontLinkAdded = false;
 
-function ensureFonts(theme) {
-  const faces = THEMES[theme]?.fonts || [];
-  if (!faces.length) return Promise.resolve();
-  if (options.fonts && !fontLinkAdded && !document.querySelector(`link[href="${FONT_HREF}"]`)) {
+const themeSheets = new Map();
+
+/** Load a theme's fonts and stylesheet before its first render. */
+function ensureThemeAssets(name) {
+  const theme = getTheme(name);
+  if (!theme) return Promise.resolve();
+  const faces = theme.fonts || [];
+  if (options.fonts && !fontLinkAdded && faces.some((f) => f.includes('IBM Plex Mono')) && !document.querySelector(`link[href="${FONT_HREF}"]`)) {
     document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: FONT_HREF }));
     fontLinkAdded = true;
   }
-  return Promise.race([
-    Promise.all(faces.map((f) => document.fonts.load(f))).catch(() => {}),
-    new Promise((resolve) => setTimeout(resolve, 2500)),
-  ]);
+  const waits = [];
+  if (theme.stylesheet) {
+    let sheet = themeSheets.get(name);
+    if (!sheet || sheet.href !== theme.stylesheet) {
+      const link = sheet?.link ?? Object.assign(document.createElement('link'), { rel: 'stylesheet' });
+      link.dataset.wermaidTheme = name;
+      const loaded = new Promise((resolve) => { link.onload = link.onerror = resolve; });
+      link.href = theme.stylesheet;
+      if (!link.isConnected) document.head.append(link);
+      themeSheets.set(name, (sheet = { href: theme.stylesheet, link, loaded }));
+    }
+    waits.push(sheet.loaded);
+  }
+  if (faces.length) waits.push(Promise.all(faces.map((f) => document.fonts.load(f))).catch(() => {}));
+  if (!waits.length) return Promise.resolve();
+  return Promise.race([Promise.all(waits), new Promise((resolve) => setTimeout(resolve, 2500))]);
 }
 
 export class WermaidDiagram extends HTMLElement {
@@ -269,12 +293,17 @@ export class WermaidDiagram extends HTMLElement {
       if (!text.trim()) { stage.replaceChildren(); return null; }
       const block = parseSource(text);
       const attr = this.getAttribute('theme');
-      const theme = attr === 'none' ? null : attr || block.overrides.settings.theme || DEFAULT_THEME;
+      // Which theme: the block's @theme, then the attribute, then the page default, then wermaid.
+      // The attribute and page default are only fallbacks, so a name the page hasn't defined
+      // falls through to the next level (with a warning from the engine).
+      const none = attr === 'none';
+      const fallbacks = none ? [] : [attr, pageDefaults.theme, DEFAULT_THEME].filter(Boolean);
+      const usedTheme = [block.overrides.settings.theme, ...fallbacks].find((n) => getTheme(n)) ?? null;
       const darkAttr = this.getAttribute('dark') ?? 'auto';
       const dark = darkAttr === 'auto' ? !!darkQuery?.matches : darkAttr !== 'false';
       this.toggleAttribute('data-dark', dark);
-      if (theme) await ensureFonts(theme);
-      const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme, dark });
+      if (usedTheme) await ensureThemeAssets(usedTheme);
+      const diagram = await engine.render(stage, text, { id: `wermaid-${++renderCount}`, theme: none ? null : undefined, defaultTheme: fallbacks, dark });
       this._diagram = diagram;
       error.hidden = true;
       this._lastVB = null;

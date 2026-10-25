@@ -2053,8 +2053,8 @@ let counter = 0;
 function createWermaid(mermaid) {
   /**
    * Render `source` into `container`.
-   * Options: `id` (SVG id), `theme` (forces a palette), `defaultTheme` (used when the block's
-   * `@theme` names no registered theme), `dark` (use the palette's dark variant).
+   * Options: `id` (SVG id), `theme` (forces a palette), `defaultTheme` (a name, or a list of
+   * names tried in order, used when the block's `@theme` names no registered theme), `dark` (use the palette's dark variant).
    * With none of them, Mermaid's own config is left alone. A name that isn't registered is
    * skipped with a warning; if no name resolves, `wermaid` is used.
    */
@@ -2064,7 +2064,7 @@ function createWermaid(mermaid) {
     const themeWarnings = [];
     let themeName = null;
     const unknown = [];
-    for (const name of [theme, parsed.overrides.settings.theme, defaultTheme]) {
+    for (const name of [theme, parsed.overrides.settings.theme, ...[defaultTheme].flat()]) {
       if (name == null || name === '') continue;
       if (getTheme(name)) { themeName = name; break; }
       if (!unknown.includes(name)) unknown.push(name);

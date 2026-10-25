@@ -35,15 +35,31 @@
   A[Lambda<br/>query] -->|a &amp; b| B[Two<br>lines]</wermaid-diagram>
 <pre class="mermaid" id="pre-br">flowchart LR
   P[Edge<br/>cache] --> Q</pre></section>
+<section id="s10">
+<wermaid-diagram id="attr-vs-block" theme="pele">flowchart LR
+  A --> B
+
+%% @layout
+%% @theme mermaid
+%% @end</wermaid-diagram>
+<wermaid-diagram id="page-default">flowchart LR
+  C --> D</wermaid-diagram>
+<wermaid-diagram id="attr-unknown" theme="nope">flowchart LR
+  E --> F</wermaid-diagram>
+<wermaid-diagram id="theme-none" theme="none">flowchart LR
+  G --> H</wermaid-diagram>
+</section>
 <section id="s8"><wermaid-diagram id="dark" dark="true">flowchart LR
   K --> L</wermaid-diagram></section>
 <script type="module">
 import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
-import { defineWermaidElement, run } from '/src/element.js';
+import { defineWermaidElement, run, defineTheme, listThemes } from '/src/element.js';
 window.EVENTS = [];
 document.addEventListener('wermaid:render', (e) => EVENTS.push(['render', e.target.id]));
 document.addEventListener('wermaid:error', (e) => EVENTS.push(['error', e.target.id]));
-defineWermaidElement(mermaid);
+defineTheme('acme', { label: 'Acme', font: { stylesheet: '/test/fixtures/acme.css' } });
+window.listThemes = listThemes;
+defineWermaidElement(mermaid, { defaults: { theme: 'acme' } });
 window.RUN = await run();
 window.READY = true;
 </script></body></html>
