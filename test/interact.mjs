@@ -99,6 +99,24 @@ const fill = await p.$eval('#sheet g.node .label-container', (n) => getComputedS
 ok('palette picker writes @theme and re-renders', /%% @theme pele/.test(s) && fill === 'rgb(242, 240, 229)', [fill, s.split('%% @layout')[1]]);
 await p.selectOption('#palette', 'wermaid'); await p.waitForTimeout(900);
 ok('choosing Wermaid removes @theme', !/@theme/.test(await src()));
+// 11d. press and hold the background to pan
+await p.selectOption('#example', '1'); await p.waitForTimeout(900);
+for (let k = 0; k < 6; k++) await p.click('#zoom-in');
+await p.waitForTimeout(200);
+const wb = await (await p.$('#sheet-wrap')).boundingBox();
+const before2 = await p.$eval('#sheet-wrap', (w) => [w.scrollLeft, w.scrollTop]);
+// find an empty spot inside the scroll area
+const spot = await p.evaluate(({ x0, y0, w, h }) => {
+  for (let y = y0 + 30; y < y0 + h - 30; y += 15) for (let x = x0 + 30; x < x0 + w - 30; x += 15) {
+    const el = document.elementFromPoint(x, y);
+    if (el && (el.id === 'sheet' || el.id === 'sheet-wrap' || el.tagName === 'svg' || el.classList.contains('root'))) return { x, y };
+  }
+  return null;
+}, { x0: wb.x, y0: wb.y, w: wb.width, h: wb.height });
+if (spot) await drag(spot, { x: spot.x - 150, y: spot.y - 80 }, 10);
+const after2 = await p.$eval('#sheet-wrap', (w) => [w.scrollLeft, w.scrollTop]);
+ok('background drag pans the view', spot && after2[0] > before2[0] && after2[1] > before2[1], { spot, before2, after2 });
+ok('panning leaves the source alone', !/nudge/.test((await src()).split('%% @layout')[1] || ''));
 // 12. switch examples
 for (const v of ['1', '2', '3', '4']) {
   await p.selectOption('#example', v); await p.waitForTimeout(900);

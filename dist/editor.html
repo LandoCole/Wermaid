@@ -123,10 +123,11 @@
   .zoom button:hover { color: var(--ink); }
   .zoom output { font-size: 12px; min-width: 4.5ch; text-align: center; font-variant-numeric: tabular-nums; color: var(--graphite); }
 
-  .sheet-wrap { position: relative; overflow: auto; min-height: 0; background: var(--sheet-bg, transparent); }
+  .sheet-wrap { position: relative; overflow: auto; min-height: 0; background: var(--sheet-bg, transparent); cursor: grab; }
+  .sheet-wrap.panning, .sheet-wrap.panning * { cursor: grabbing !important; }
   #sheet { padding: 44px 36px 36px; width: max-content; min-width: 100%; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
   #sheet svg { display: block; overflow: visible; }
-  #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel { cursor: grab; }
+  #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel { cursor: move; }
   #sheet.editable svg g.cluster > rect, #sheet.editable svg .statediagram-cluster rect { cursor: move; }
   #sheet.dragging, #sheet.dragging * { cursor: grabbing !important; }
   #sheet.editable svg g.node, #sheet.editable svg g.edgeLabel, .wm-hit, .wm-overlay .h { touch-action: none; }
@@ -2110,7 +2111,7 @@ function renderStrip() {
   }
   if (!selection) {
     const hint = span('hint', '');
-    hint.innerHTML = 'Drag a shape to nudge it from its auto-layout spot; <kbd>Alt</kbd>-drag pins it in place. Drag a corner to resize, a line to bend it (double-click a bend to remove it), a subgraph’s frame to move everything inside. <kbd>←↑→↓</kbd> nudge · <kbd>Del</kbd> resets.';
+    hint.innerHTML = 'Drag a shape to nudge it from its auto-layout spot; <kbd>Alt</kbd>-drag pins it in place. Drag a corner to resize, a line to bend it (double-click a bend to remove it), a subgraph’s frame to move everything inside, the background to pan. <kbd>←↑→↓</kbd> nudge · <kbd>Del</kbd> resets.';
     strip.append(hint);
     return;
   }
@@ -2254,7 +2255,8 @@ sheet.addEventListener('pointermove', (ev) => {
 
 sheet.addEventListener('pointerdown', (ev) => {
   if (!diagram?.supported || showStock || ev.button !== 0) return;
-  if (!diagram.svg.contains(ev.target)) { select(null); return; }
+  // Empty sheet: leave it to the pan handler on the scroll area.
+  if (!diagram.svg.contains(ev.target)) return;
   const t = hitTarget(ev.target);
   const p0 = diagram.toDiagram(ev.clientX, ev.clientY);
   const geom = diagram.geometry;
@@ -2311,7 +2313,7 @@ sheet.addEventListener('pointerdown', (ev) => {
     const existing = entryFor('edge', t.id, false)?.via?.length || 0;
     Object.assign(drag, { kind: 'newvia', id: t.id, index: Math.min(bestI, existing), start: { x: p0.x, y: p0.y } });
   } else {
-    select(null);
+    // Background of the drawing: also panned (and a plain click deselects).
     drag = null;
     return;
   }
@@ -2403,6 +2405,32 @@ function isDoublePress(key) {
   lastPress = dbl ? { key: '', time: 0 } : { key, time: now };
   return dbl;
 }
+
+/* ---------- panning: press and hold the background (or use the middle button anywhere) ---------- */
+let pan = null;
+wrap.addEventListener('pointerdown', (ev) => {
+  if (drag || pan || (ev.button !== 0 && ev.button !== 1) || ev.pointerType === 'touch') return;
+  pan = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false };
+  wrap.setPointerCapture(ev.pointerId);
+  ev.preventDefault();
+});
+wrap.addEventListener('pointermove', (ev) => {
+  if (!pan || ev.pointerId !== pan.id) return;
+  const dx = ev.clientX - pan.x, dy = ev.clientY - pan.y;
+  if (!pan.moved && Math.hypot(dx, dy) < 3) return;
+  pan.moved = true;
+  wrap.classList.add('panning');
+  wrap.scrollLeft = pan.left - dx;
+  wrap.scrollTop = pan.top - dy;
+});
+function endPan(ev) {
+  if (!pan || ev.pointerId !== pan.id) return;
+  if (!pan.moved && ev.type === 'pointerup' && selection) select(null);
+  wrap.classList.remove('panning');
+  pan = null;
+}
+wrap.addEventListener('pointerup', endPan);
+wrap.addEventListener('pointercancel', endPan);
 
 function distToSegment(p, a, b) {
   const dx = b.x - a.x, dy = b.y - a.y;
