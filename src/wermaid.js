@@ -78,6 +78,8 @@ export function emptyOverrides() {
 
 /** How edges are drawn. `null` (no setting) keeps Mermaid's own curves on untouched edges. */
 export const EDGE_STYLES = ['rounded', 'orthogonal', 'curved'];
+/** `@edges` also takes `mermaid`: Mermaid's own curves, overriding a theme's edge look. */
+const BLOCK_EDGE_STYLES = [...EDGE_STYLES, 'mermaid'];
 const DEFAULT_RADIUS = 6;
 
 const NUM = String.raw`-?\d+(?:\.\d+)?`;
@@ -100,8 +102,8 @@ function parseBlockLines(blockLines, firstLineNo) {
       const [name, ...args] = text.slice(1).split(/\s+/);
       if (name === 'edges') {
         const [style, radius] = args;
-        if (!EDGE_STYLES.includes(style)) {
-          errors.push({ line: lineNo, message: `@edges expects ${EDGE_STYLES.join(', ')} — got "${style ?? ''}"` });
+        if (!BLOCK_EDGE_STYLES.includes(style)) {
+          errors.push({ line: lineNo, message: `@edges expects ${BLOCK_EDGE_STYLES.join(', ')} — got "${style ?? ''}"` });
           return;
         }
         overrides.settings.edges = { style };
@@ -1090,7 +1092,11 @@ function applyOverrides(scene, overrides, mut) {
   const movedBoxes = [...geom.nodes.entries()].filter(([, g]) => g.changed);
   const plans = [];
   // `@edges`, else the theme's edge look (`scene.edgeDefault`), else Mermaid's own curves.
-  const edgeSetting = overrides.settings?.edges || scene.edgeDefault || null;
+  // `@edges mermaid` asks for Mermaid's curves even when the theme has a look.
+  const blockEdges = overrides.settings?.edges;
+  const edgeSetting = blockEdges
+    ? (blockEdges.style === 'mermaid' ? { ...blockEdges, style: null } : blockEdges)
+    : scene.edgeDefault || null;
   for (const e of scene.edges.values()) {
     const ov = edgeOv.get(e.id);
     // The look this edge is drawn in: its own `style`, else `@edges`, else Mermaid's (null).
@@ -1356,10 +1362,12 @@ export function createWermaid(mermaid) {
         if (scene) geom = applyOverrides(scene, overrides, mut);
         return geom;
       },
-      /** Show the stock Mermaid layout (overrides kept, just not drawn). */
+      /** Show the stock Mermaid layout (overrides kept, just not drawn; the theme's edge look too). */
       showStock() {
         mut.restore();
-        geom = scene ? applyOverrides(scene, emptyOverrides(), mut) : null;
+        const stock = emptyOverrides();
+        stock.settings.edges = { style: 'mermaid' };
+        geom = scene ? applyOverrides(scene, stock, mut) : null;
         return geom;
       },
       /** Current source text with this diagram's overrides written back. */

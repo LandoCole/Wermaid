@@ -306,6 +306,26 @@ const snap = (svg) => ({
   ok('theme: built-in names are protected', throws(() => defineTheme('pele', {})));
   ok('theme: bad names are rejected', throws(() => defineTheme('Acme', {})) && throws(() => defineTheme('9a', {})));
   ok('theme: spacing widens the layout', nodeGap(acmeRender) > nodeGap(wermaidRender), [nodeGap(acmeRender), nodeGap(wermaidRender)]);
+  // A dark-on-dark light variant: its derived "dark" variant flips to a light canvas.
+  defineTheme('night', { colors: { background: '#111111', text: '#eeeeee', muted: '#999999', line: '#cccccc', nodeFill: '#222222' } });
+  const nk = getTheme('night').config({ dark: true }).themeVariables;
+  const nightBg = getTheme('night').background(true);
+  const lightSide = (c) => luminance(c) > 0.5;
+  ok('theme: inverted dark keeps text contrast', contrast(nk.textColor, nightBg) >= 4.5 && contrast(nk.transitionLabelColor, nightBg) >= 3, [nightBg, nk.textColor, nk.transitionLabelColor]);
+  ok('theme: inverted dark surfaces follow the background', [nk.edgeLabelBackground, nk.clusterBkg, nk.mainBkg].every((c) => lightSide(c) === lightSide(nightBg)), [nightBg, nk.edgeLabelBackground, nk.clusterBkg, nk.mainBkg]);
+  const nl = getTheme('night').config({ dark: false }).themeVariables;
+  ok('theme: unset surfaces follow a new light background', nl.clusterBkg === '#111111' && nl.edgeLabelBackground === '#111111', [nl.clusterBkg, nl.edgeLabelBackground]);
+  // `@edges mermaid`: Mermaid's own curves, clearing the theme's edge default.
+  defineTheme('square', { edges: { style: 'orthogonal' } });
+  const sqSrc = BASE + '\n%% @layout\n%% @theme square\n%% @edges mermaid\n%% @end';
+  const sq = await wermaid.render(el, sqSrc, { id: 't10' });
+  ok('theme: @edges mermaid clears the theme edge style', sq.parseErrors.length === 0 && [...sq.geometry.edges.values()].every((g) => g.mode !== 'route'), [sq.parseErrors, [...sq.geometry.edges.values()].map((g) => g.mode)]);
+  ok('theme: @edges mermaid round-trips', /%% @edges mermaid/.test(sq.writeSource(sqSrc)) && parseSource(sq.writeSource(sqSrc)).overrides.settings.edges.style === 'mermaid', sq.writeSource(sqSrc));
+  ok('theme: per-edge style still rejects mermaid', parseSource(BASE + '\n%% @layout\n%% A->B style mermaid\n%% @end').errors.length === 1);
+  const st = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme square\n%% @end', { id: 't11' });
+  ok('theme: square theme routes before showStock', [...st.geometry.edges.values()].some((g) => g.mode === 'route'));
+  st.showStock();
+  ok('theme: showStock ignores the theme edge style', [...st.geometry.edges.values()].every((g) => g.mode !== 'route'), [...st.geometry.edges.values()].map((g) => g.mode));
   defineTheme('acme', { label: 'Acme 2', colors: { nodeFill: '#ddeeff' } });
   ok('theme: a custom theme may be redefined', getTheme('acme').label === 'Acme 2' && listThemes().filter((t) => t.name === 'acme').length === 1);
 }

@@ -220,21 +220,34 @@ function darken(v) {
   return toHex({ ...hslToRgb({ ...hsl, l: 0.06 + 0.88 * (1 - hsl.l) }), a: c.a });
 }
 
-/** Lighten `fg` (same hue) until it reaches `target` contrast against `bg`, or white. */
+const WHITE = { r: 255, g: 255, b: 255 }, BLACK = { r: 0, g: 0, b: 0 };
+
+/** Whether a colour reads as light: black text on it has more contrast than white (luminance > ~0.18). */
+function isLight(c) {
+  return contrast(c, BLACK) > contrast(c, WHITE);
+}
+
+/**
+ * Move `fg`'s lightness (same hue) away from `bg` until it reaches `target` contrast:
+ * darker on a light background, lighter on a dark one; black or white if it never does.
+ */
 function keepContrast(fg, bg, target) {
   const f = parseColor(fg), b = parseColor(bg);
   if (!f || !b || contrast(f, b) >= target) return fg;
-  const hsl = rgbToHsl(f);
-  for (let l = hsl.l; l <= 1.0001; l += 0.01) {
-    const c = { ...hslToRgb({ ...hsl, l: Math.min(1, l) }), a: f.a };
+  const up = !isLight(b), hsl = rgbToHsl(f);
+  for (let i = 0; i <= 100; i++) {
+    const l = Math.max(0, Math.min(1, hsl.l + (up ? i : -i) / 100));
+    const c = { ...hslToRgb({ ...hsl, l }), a: f.a };
     if (contrast(c, b) >= target) return toHex(c);
+    if (l === 0 || l === 1) break;
   }
-  return '#ffffff';
+  return up ? '#ffffff' : '#000000';
 }
 
 /* ---------- specs ---------- */
 
 const COLOR_KEYS = ['background', 'text', 'muted', 'line', 'nodeFill', 'nodeBorder', 'groupFill', 'groupBorder', 'labelBackground'];
+const SURFACE_KEYS = ['nodeFill', 'groupFill', 'labelBackground'];
 const GROUPS = ['font', 'shapes', 'edges', 'spacing'];
 
 /** Built-ins as specs, for themes that extend them. Their own drawing stays hand-written above. */
@@ -286,26 +299,46 @@ const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const defined = (o) => Object.fromEntries(Object.entries(isObj(o) ? o : {}).filter(([, v]) => v !== undefined && v !== null));
 
 /**
- * Merge `spec` over the resolved `parent`. Light colours the child sets get a fresh dark
- * counterpart; ones it leaves alone keep the parent's dark colour.
+ * Merge `spec` over the resolved `parent`.
+ *
+ * Light: surfaces (node fill, group fill, label background) the child leaves alone that were the
+ * parent's background follow the child's background, so "no fill" stays no fill.
+ *
+ * Dark: `dark.colors` wins. A colour the child (or its new background) changed gets a fresh dark
+ * counterpart from `darken()`; one it left alone keeps the parent's dark colour, unless the dark
+ * background ended up on the other side of light/dark from the parent's, in which case every
+ * colour is re-derived. Text, muted and line keep at least the contrast they had in light mode
+ * (capped at 7 for text, 4.5 for the others); derived surfaces stay on the background's side.
  */
 function resolveSpec(parent, spec) {
   const out = { label: spec.label ?? parent.label, dark: { colors: {} }, fonts: parent.fonts, credit: parent.credit };
   for (const g of GROUPS) out[g] = { ...parent[g], ...defined(spec[g]) };
-  out.colors = { ...parent.colors, ...defined(spec.colors) };
   const own = defined(spec.colors), ownDark = defined(spec.dark?.colors);
-  for (const k of COLOR_KEYS) {
-    out.dark.colors[k] = ownDark[k] ?? (k in own ? undefined : parent.dark.colors[k]);
+  out.colors = { ...parent.colors, ...own };
+  const changed = new Set(Object.keys(own));
+  if ('background' in own) {
+    for (const k of SURFACE_KEYS) {
+      if (!(k in own) && parent.colors[k] === parent.colors.background) { out.colors[k] = own.background; changed.add(k); }
+    }
   }
-  // Text-ish colours keep at least the contrast they had in light mode (WCAG AA at most).
-  const bgDark = out.dark.colors.background ?? darken(out.colors.background);
+  const bgDark = ownDark.background ?? (changed.has('background') ? darken(out.colors.background) : parent.dark.colors.background);
+  const pb = parseColor(bgDark), pp = parseColor(parent.dark.colors.background);
+  const flipped = !!(pb && pp) && isLight(pb) !== isLight(pp);
+  for (const k of COLOR_KEYS) {
+    out.dark.colors[k] = ownDark[k] ?? (changed.has(k) || flipped ? undefined : parent.dark.colors[k]);
+  }
+  out.dark.colors.background = bgDark;
+  const lb = parseColor(out.colors.background), db = parseColor(bgDark);
   for (const k of COLOR_KEYS) {
     if (out.dark.colors[k] !== undefined) continue;
-    let v = k === 'background' ? bgDark : darken(out.colors[k]);
+    let v = darken(out.colors[k]);
     if (['text', 'muted', 'line'].includes(k)) {
-      const lf = parseColor(out.colors[k]), lb = parseColor(out.colors.background);
+      const lf = parseColor(out.colors[k]);
       const target = lf && lb ? Math.min(contrast(lf, lb), k === 'text' ? 7 : 4.5) : 4.5;
       v = keepContrast(v, bgDark, target);
+    } else if (SURFACE_KEYS.includes(k)) {
+      const c = parseColor(v);
+      if (c && db && isLight(c) !== isLight(db)) v = bgDark;
     }
     out.dark.colors[k] = v;
   }
