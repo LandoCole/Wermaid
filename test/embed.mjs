@@ -1,10 +1,11 @@
 import { chromium } from 'playwright';
+const BASE = `http://127.0.0.1:${process.env.WERMAID_TEST_PORT || 8765}`;
 import fs from 'node:fs';
 const b = await chromium.launch();
 const ctx = await b.newContext({ viewport: { width: 1200, height: 900 }, acceptDownloads: true });
 const p = await ctx.newPage();
 p.on('pageerror', (e) => console.log('PAGEERR', e.message));
-await p.goto('http://127.0.0.1:8765/test/embed.html');
+await p.goto(BASE+'/test/embed.html');
 await p.waitForFunction(() => window.READY, null, { timeout: 30000 });
 await p.waitForTimeout(500);
 const R = []; const ok = (n, c, x) => R.push(`${c ? 'PASS' : 'FAIL'} ${n}${c ? '' : ' ' + JSON.stringify(x)}`);

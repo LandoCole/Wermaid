@@ -1,9 +1,10 @@
 import { chromium } from 'playwright';
+const BASE = `http://127.0.0.1:${process.env.WERMAID_TEST_PORT || 8765}`;
 const SHOT = process.env.SHOT_DIR || 'test/shots/';
 const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
 p.on('pageerror', e=>console.log('PAGEERR', e.message));
 p.on('console', m=>{ if(m.type()==='error' && !m.text().includes('ERR_TUNNEL')) console.log('CONSOLE', m.text().slice(0,300)); });
-await p.goto('http://127.0.0.1:8765/dist/local.html?mermaid=/mermaid-dist/mermaid.esm.min.mjs');
+await p.goto(BASE+'/dist/local.html?mermaid=/mermaid-dist/mermaid.esm.min.mjs');
 await p.waitForFunction(()=>window.READY, null, {timeout:30000});
 const R = []; const ok = (n, c, x) => R.push(`${c ? 'PASS' : 'FAIL'} ${n}${c ? '' : ' ' + JSON.stringify(x)}`);
 const src = () => p.$eval('#src', t => t.value);
@@ -67,8 +68,8 @@ const exT = await p.$eval('[id*="-flowchart-pay-"]', (g) => g.getAttribute('tran
 ok('stock toggle shows stock layout', !stockT.startsWith('translate(') || stockT.split(')').length < exT.split(')').length, [stockT, exT]);
 // 9. type in the source: body edit keeps overrides
 await p.click('#src');
-await p.keyboard.press('Control+Home');
-await p.keyboard.press('End');
+// caret to the end of line 1 (Control+Home is not "document start" on macOS, so set it directly)
+await p.$eval('#src', (t) => { const i = t.value.indexOf('\n'); t.setSelectionRange(i, i); });
 await p.keyboard.type('\n  api --> audit[Audit log]');
 await p.waitForTimeout(900);
 s = await src();
