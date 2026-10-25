@@ -104,6 +104,25 @@ const snap = (svg) => ({
   ok('label: offset applied', e9.labelBox && Math.abs(e9.labelBox.cy - e9.labelAuto.y - 20) < 0.01);
 }
 
+// 8b. Subgraph size: a frame of exactly that size, centred on its contents; never smaller than them.
+{
+  const d = await wermaid.render(document.getElementById('b'), BASE + `\n%% @layout\n%% G1 size 420x260\n%% G2 size 10x10\n%% @end`, { id: 'z' });
+  const G1 = d.geometry.clusters.get('G1').box, G2 = d.geometry.clusters.get('G2').box;
+  const inner = (ids) => {
+    const bs = ids.map((id) => d.geometry.nodes.get(id).box);
+    const x0 = Math.min(...bs.map((b) => b.x)), x1 = Math.max(...bs.map((b) => b.x + b.w));
+    const y0 = Math.min(...bs.map((b) => b.y)), y1 = Math.max(...bs.map((b) => b.y + b.h));
+    return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+  };
+  const i1 = inner(['C', 'E']), i2 = inner(['X', 'Y']);
+  ok('subgraph size: frame drawn at that size', G1.w === 420 && G1.h === 260, G1);
+  ok('subgraph size: centred on its contents', Math.abs(G1.cx - i1.cx) < 0.01 && Math.abs(G1.cy - i1.cy) < 0.01, { G1, i1 });
+  ok('subgraph size: too small grows to fit', G2.w >= i2.w && G2.h >= i2.h && Math.abs(G2.cx - i2.cx) < 0.01, { G2, i2 });
+  const rb = d.svg.querySelector('#z-G1 > rect').getBBox();
+  ok('subgraph size: rect drawn at new size', Math.abs(rb.width - 420) < 0.5 && Math.abs(rb.height - 260) < 0.5, { w: rb.width, h: rb.height });
+  ok('subgraph size: round-trips', /%% G1\s+size 420x260/.test(d.writeSource(BASE)), d.writeSource(BASE));
+}
+
 // 9. Other diagram types
 {
   const st = await wermaid.render(document.getElementById('b'), `stateDiagram-v2

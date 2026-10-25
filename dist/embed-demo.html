@@ -606,6 +606,8 @@ function writeSource(src, overrides, scene) {
 
 const rect = (x, y, w, h) => ({ x, y, w, h, cx: x + w / 2, cy: y + h / 2 });
 const rectFromCenter = (cx, cy, w, h) => rect(cx - w / 2, cy - h / 2, w, h);
+/** Space kept between a sized subgraph's frame and its contents when the size asked for is too small. */
+const FRAME_MIN_MARGIN = 12;
 const union = (rs) => {
   if (!rs.length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -1379,11 +1381,16 @@ function applyOverrides(scene, overrides, mut) {
   const clusters = [...scene.clusters.values()].sort((a, b) => b.depth - a.depth);
   for (const c of clusters) {
     const kids = c.children.map((ch) => (ch.type === 'node' ? geom.nodes : geom.clusters).get(ch.id));
-    const changed = kids.some((k) => k.changed);
+    const size = clusterOv.get(c.id)?.size;
+    const changed = kids.some((k) => k.changed) || !!size;
     let box = c.box;
     if (changed && c.pad) {
       const inner = union(kids.map((k) => k.box));
-      box = rect(inner.x - c.pad.l, inner.y - c.pad.t, inner.w + c.pad.l + c.pad.r, inner.h + c.pad.t + c.pad.b);
+      // A sized frame is centred on its contents (so frames of one size line up whatever padding
+      // Mermaid gave them), and never drawn smaller than its contents plus a small margin.
+      box = size
+        ? rectFromCenter(inner.cx, inner.cy, Math.max(size.w, inner.w + 2 * FRAME_MIN_MARGIN), Math.max(size.h, inner.h + 2 * FRAME_MIN_MARGIN))
+        : rect(inner.x - c.pad.l, inner.y - c.pad.t, inner.w + c.pad.l + c.pad.r, inner.h + c.pad.t + c.pad.b);
       reshapeFrame(c, box, mut);
       if (c.labelEl) {
         mut.set(c.labelEl, 'transform', prependTranslate(c.labelEl.getAttribute('transform'), box.cx - c.box.cx, box.y - c.box.y));

@@ -24,6 +24,7 @@ flowchart LR
 %% C        at 320,200            (pin the center, diagram units)
 %% D        size 160x60
 %% G1       nudge 80,0            (subgraph: moves everything inside it)
+%% G2       size 900x150          (subgraph: a frame of exactly this size)
 %% A->B     via 260,140 260,200   (edge bends; A->B#2 for the second A→B edge)
 %% edge e1  label 0,-12 ; style orthogonal   (edge by Mermaid edge id)
 %% @end
@@ -33,7 +34,7 @@ flowchart LR
 |---|---|---|
 | `nudge dx,dy` | node, subgraph | Offset from the auto layout. Follows the layout when the source changes. |
 | `at x,y` | node, subgraph | Pin the center at fixed coordinates, whatever the layout does. |
-| `size WxH` | node | Draw the shape at this size |
+| `size WxH` | node, subgraph | Draw the shape at this size. A subgraph's frame is centred on what's inside it and never drawn smaller than its contents, so frames given one size line up as equal lanes. |
 | `via x,y …` | edge | Route the edge through these points |
 | `label dx,dy` | edge | Offset the label from its automatic spot |
 | `style rounded \| orthogonal \| curved` | edge | Draw this edge in a different look |
