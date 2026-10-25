@@ -177,6 +177,10 @@
     margin-top: -18px; font-size: 11px; letter-spacing: 0.06em; color: var(--graphite);
   }
   .figcap .coords { font-variant-numeric: tabular-nums; }
+  /* Thanks to whoever a palette came from, on its own line while that palette is shown. */
+  .figcap .credit { flex-basis: 100%; letter-spacing: 0.02em; }
+  .figcap .credit a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+  .figcap .credit a:hover { text-decoration-color: var(--ink); }
 
   .menu-wrap { position: relative; }
   .menu {
@@ -287,7 +291,7 @@
     </div>
     <div class="strip" id="strip"></div>
   </section>
-  <div class="figcap"><span id="figcap">Fig. 1</span><span class="coords" id="coords"></span></div>
+  <div class="figcap"><span id="figcap">Fig. 1</span><span class="coords" id="coords"></span><span class="credit" id="palette-credit" hidden></span></div>
 </main>
 <div class="toast" id="toast" role="status"></div>
 
@@ -438,6 +442,7 @@ async function refresh(text) {
   renderedBody = renderKey;
   renderedDark = isDark();
   $('palette').value = palette;
+  showCredit(palette);
   // The drawing sits on its palette's own ground (the page's paper for Wermaid).
   wrap.style.setProperty('--sheet-bg', palette === DEFAULT_THEME ? 'transparent' : diagram.background || 'transparent');
   overrides = diagram.overrides;
@@ -1274,6 +1279,20 @@ $('copy-src').addEventListener('click', () => copyText(srcEl.value, 'Source copi
 
 /* ---------- export ---------- */
 const slug = () => exampleName().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
+
+/** Credit the palette's source while it's in use (see THEMES[name].credit). */
+function showCredit(name) {
+  const el = $('palette-credit');
+  const credit = THEMES[name]?.credit;
+  el.hidden = !credit;
+  el.replaceChildren();
+  if (!credit) return;
+  el.append(`${credit.text} · `);
+  credit.links.forEach((l, i) => {
+    if (i) el.append(' · ');
+    el.append(Object.assign(document.createElement('a'), { href: l.href, textContent: l.label, target: '_blank', rel: 'noopener' }));
+  });
+}
 
 /** What the drawing sits on: the palette's ground, else the page's paper. */
 function exportBackground() {

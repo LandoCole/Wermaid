@@ -7,6 +7,15 @@
  *   pele     the look of Pele (pele.run): filled rounded nodes, Flexoki colours,
  *            system sans. Reads `--pele-*` CSS variables from the page when set,
  *            so an existing Pele skin carries over.
+ *
+ * Thanks: the `pele` palette is a thank-you to Pele, the Mermaid renderer by Steph Ango
+ * (kepano), made for Obsidian: https://pele.run · https://github.com/obsidianmd/pele (MIT)
+ * · https://stephango.com. Its colours are Flexoki, also by Steph Ango
+ * (https://stephango.com/flexoki). Wermaid borrows only the look: the palette is
+ * re-expressed as a Mermaid theme, and no Pele code is included.
+ *
+ * A palette may carry `credit` ({ text, links: [{ label, href }] }); the editor and the demo
+ * show it whenever that palette is in use.
  */
 
 const MONO = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace';
@@ -89,6 +98,14 @@ export const THEMES = {
   },
   pele: {
     label: 'Pele',
+    credit: {
+      text: 'Pele palette: thanks to Steph Ango (kepano) for Pele and its Flexoki colours',
+      links: [
+        { label: 'pele.run', href: 'https://pele.run' },
+        { label: 'GitHub', href: 'https://github.com/obsidianmd/pele' },
+        { label: 'Steph Ango', href: 'https://stephango.com' },
+      ],
+    },
     background: (dark, el) => peleColors(dark, el).bg,
     config: ({ dark, el }) => {
       const p = peleColors(dark, el);

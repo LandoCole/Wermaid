@@ -47,7 +47,7 @@ directive, so it never changes the page's global Mermaid config.
 |---|---|
 | `mermaid` | Mermaid's own black-and-white theme (`neutral`, and `dark` in dark mode) |
 | `wermaid` | Thin outlines, IBM Plex Mono, no fills (the editor's default) |
-| `pele` | The look of [Pele](https://pele.run): filled, rounded nodes in Flexoki colours with a system sans. If the page defines Pele's `--pele-*` CSS variables, those win, so an existing Pele skin carries over. |
+| `pele` | The look of [Pele](https://pele.run) by [Steph Ango](https://stephango.com) (see [Thanks](#thanks)): filled, rounded nodes in [Flexoki](https://stephango.com/flexoki) colours with a system sans. If the page defines Pele's `--pele-*` CSS variables, those win, so an existing Pele skin carries over. |
 
 Pele is its own renderer with its own layout; Wermaid borrows its skin, not its engine,
 because the layout block is anchored to Mermaid's layout. Every palette has a light and a dark
@@ -210,6 +210,22 @@ drawn as a W. `assets/wermaid-icon.svg` is the favicon cut (no node, heavier lin
 strokes in dark mode.
 
 The name: Wermaid is Mermaid with its M flipped over into a W.
+
+## Thanks
+
+The `pele` palette is a thank-you to **[Pele](https://pele.run)**, the Mermaid renderer by
+**[Steph Ango](https://stephango.com)** ([@kepano](https://github.com/kepano)), made for Obsidian:
+[github.com/obsidianmd/pele](https://github.com/obsidianmd/pele) (MIT). Its clean, filled look
+showed how good a Mermaid diagram can be, and its colours are
+[Flexoki](https://stephango.com/flexoki), also by Steph. Thank you, Steph.
+
+Wermaid borrows Pele's look, not its code: the palette is re-expressed as a Mermaid theme, and
+Wermaid reads Pele's `--pele-*` CSS variables so an existing Pele skin carries over. Pele is a
+separate renderer with its own layout; use it directly if you want Pele itself. The editor and the
+embed demo credit Pele whenever its palette is shown.
+
+Diagrams are parsed, laid out and drawn by [Mermaid](https://mermaid.js.org); Wermaid only adjusts
+what Mermaid produces. The editor's type is [IBM Plex Mono](https://github.com/IBM/plex).
 
 ## Development
 

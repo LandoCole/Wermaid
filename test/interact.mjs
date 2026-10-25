@@ -152,6 +152,12 @@ for (const [dx, dy, name] of [[-4000, -4000, 'left/up'], [4000, 4000, 'right/dow
   ok(`wheel-flinging ${name} stops at the canvas edge`, fine(s.left, s.right, s.vw) && fine(s.top, s.bottom, s.vh), s);
 }
 await p.click('#zoom-fit'); await p.waitForTimeout(100);
+// 11f. the Pele palette credits Pele and its author while it's shown
+await p.selectOption('#palette', 'pele'); await p.waitForTimeout(1200);
+const credit = await p.evaluate(() => { const c = document.getElementById('palette-credit'); return { shown: !c.hidden && c.offsetHeight > 0, text: c.textContent, hrefs: [...c.querySelectorAll('a')].map((a) => a.href) }; });
+ok('Pele palette shows a credit to Steph Ango with links', credit.shown && credit.text.includes('Steph Ango') && ['https://pele.run/', 'https://github.com/obsidianmd/pele', 'https://stephango.com/'].every((h) => credit.hrefs.includes(h)), credit);
+await p.selectOption('#palette', 'wermaid'); await p.waitForTimeout(1200);
+ok('other palettes show no credit', await p.$eval('#palette-credit', (c) => c.hidden));
 // 12. switch examples
 for (const v of ['1', '2', '3', '4']) {
   await p.selectOption('#example', v); await p.waitForTimeout(900);
