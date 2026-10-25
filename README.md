@@ -53,9 +53,14 @@ The `pele` palette is a thank-you to [Pele](https://pele.run), the Mermaid rende
 Steph Ango ([@kepano](https://github.com/kepano)), and uses kepano's
 [Flexoki](https://stephango.com/flexoki) colours.
 
-Pele is its own renderer with its own layout; Wermaid borrows its skin, not its engine,
-because the layout block is anchored to Mermaid's layout. Every palette has a light and a dark
-variant; pass `dark: true` to `render()` for the dark one. Palettes change fonts and spacing,
+Pele is its own renderer with its own layout. For now Wermaid borrows only its look: the
+`pele` palette is still drawn by Mermaid, and the layout block is anchored to Mermaid's layout.
+We plan to add Pele's renderer as an optional engine in a future release (early work is on
+the [`pele-engine-spike`](https://github.com/LandoCole/Wermaid/tree/pele-engine-spike) branch).
+Pele lays diagrams out differently, so overrides saved against Mermaid's layout won't line up
+when a diagram is drawn by Pele.
+
+Every palette has a light and a dark variant; pass `dark: true` to `render()` for the dark one. Palettes change fonts and spacing,
 so Mermaid's auto layout shifts a little between them: `nudge` offsets follow along, `at` pins
 don't.
 
