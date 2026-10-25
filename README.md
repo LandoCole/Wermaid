@@ -431,15 +431,16 @@ property form needs the element defined first. For `streaming` pass a string, wh
 `streaming={streaming ? '' : undefined}`.
 
 **react-markdown.** Override the `code` component: return `<wermaid-diagram>` for
-`language-mermaid` and leave other blocks alone. The context carries "the answer is still arriving"
-down without remounting the diagram:
+`language-mermaid` and leave other blocks alone. react-markdown never tells the code component
+whether the answer is still arriving, so a context carries that down (without remounting the
+diagram). Take `node` out of the props: it's react-markdown's syntax tree, not an attribute.
 
 ```jsx
 import Markdown from 'react-markdown';
 
 const Streaming = React.createContext(false);
 
-function Code({ className, children, ...rest }) {
+function Code({ node, className, children, ...rest }) {
   const streaming = React.useContext(Streaming);
   if (/language-mermaid/.test(className ?? '')) {
     return (
@@ -464,21 +465,36 @@ react-markdown draws fenced blocks inside a `<pre>`, so the diagram sits in it; 
 `<pre>` or override `pre` too if you don't want its box.
 
 **Streamdown** and other streaming Markdown components have the same slot, the code-block
-component override. Use the same component there; if the library tells you a block is still being
-written, pass that as `streaming`.
+component override, and don't pass a streaming flag to it either. Use the same component and wrap
+the renderer in the same provider.
 
 **`createMermaidBlock`** is that component, ready-made. `src/react.js` takes your React instead of
-importing it, so it loads from a CDN:
+importing it, so it loads from a CDN. Give it your streaming context as `streaming` and provide
+the value around the renderer:
 
 ```jsx
 import { createMermaidBlock } from 'https://cdn.jsdelivr.net/gh/LandoCole/Wermaid@v0.4.0/src/react.js';
 
-const MermaidBlock = createMermaidBlock(React, { features: ['copy', 'download', 'edit'], formats: ['png', 'svg'], theme: 'acme' });
-<Markdown components={{ code: MermaidBlock }}>{answer}</Markdown>
+const Streaming = React.createContext(false);
+const MermaidBlock = createMermaidBlock(React, {
+  features: ['copy', 'download', 'edit'], formats: ['png', 'svg'], theme: 'acme', streaming: Streaming,
+});
+
+function Answer({ text, isStreaming }) {
+  return (
+    <Streaming.Provider value={isStreaming}>
+      <Markdown components={{ code: MermaidBlock }}>{text}</Markdown>
+    </Streaming.Provider>
+  );
+}
 ```
 
-It returns `<wermaid-diagram>` for `language-mermaid` blocks and a plain `<code>` for the rest, and
-takes a `streaming` prop.
+For Streamdown (or any renderer with a `components` override) it's the same:
+`<Streaming.Provider value={isStreaming}><Streamdown components={{ code: MermaidBlock }}>{text}</Streamdown></Streaming.Provider>`.
+
+It returns `<wermaid-diagram>` for `language-mermaid` blocks and a plain `<code>` for the rest.
+`streaming` may also be a plain `true`/`false`, and a `streaming` prop passed to the component
+directly wins over the option.
 
 ## Library
 

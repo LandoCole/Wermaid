@@ -215,6 +215,24 @@ ok('stop() ends watching', await p.$eval('#later', (m) => !!m.querySelector('pre
   ok('react helper leaves other code alone', r3.type === 'code' && r3.props.className === 'language-js', r3);
   ok('react helper does not match look-alike languages', (await reactRender({ className: 'language-mermaidx', children: 'x' })).type === 'code'
     && (await reactRender({ children: 'x' })).type === 'code');
+  // react-markdown and Streamdown never pass `streaming` to the code slot: a context carries it.
+  // `context` is the value the stub's useContext returns; `option` is 'context', true or false.
+  const reactWith = (props, option, context) => a.evaluate(async ([props, option, context]) => {
+    const { createMermaidBlock } = await import('/src/react.js');
+    const Ctx = { $$typeof: Symbol.for('react.context'), Provider: {}, _currentValue: false };
+    const React = {
+      createElement: (type, props, ...c) => ({ type, props: { ...props, children: c } }),
+      useContext: (ctx) => (ctx === Ctx ? context : (() => { throw new Error('wrong context'); })()),
+    };
+    return createMermaidBlock(React, { streaming: option === 'context' ? Ctx : option })(props);
+  }, [props, option, context]);
+  const block = { className: 'language-mermaid', children: src };
+  ok('react helper reads streaming from a context', (await reactWith(block, 'context', true)).props.streaming === ''
+    && (await reactWith(block, 'context', false)).props.streaming === undefined);
+  ok('a streaming prop beats the context', (await reactWith({ ...block, streaming: false }, 'context', true)).props.streaming === undefined
+    && (await reactWith({ ...block, streaming: true }, 'context', false)).props.streaming === '');
+  ok('react helper takes streaming as a boolean option', (await reactWith(block, true)).props.streaming === ''
+    && (await reactWith(block, false)).props.streaming === undefined && (await reactWith({ ...block, streaming: false }, true)).props.streaming === undefined);
   await a.close();
 }
 
