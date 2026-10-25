@@ -2819,12 +2819,49 @@ const watchedElements = new WeakSet();
 /**
  * Upgrade blocks under `root` as they appear, each once its text has been still for `settle` ms.
  * A block's timer belongs to its place: its message (the child of `root` it sits in) and its
- * index among the blocks there, so a <pre> recreated with the same text keeps its timer. Returns
- * a function that stops watching.
+ * index among the blocks there, so a <pre> recreated with the same text keeps its timer. A block
+ * the app goes on writing into after its upgrade (a stream that paused for longer than `settle`)
+ * is still followed: the element waits as `streaming` and takes the text once it is still again.
+ * Returns a function that stops watching.
  */
 function watchBlocks(root, selector, attributes, settle) {
   const places = new WeakMap(); // message -> Map(index -> { node, text, timer, done })
   const timing = new Set();
+  const following = new Set();
+  // Upgrade a block, then keep an eye on the node it replaced until the element goes.
+  const upgradeAndFollow = (node) => {
+    const el = upgrade(node, attributes, true);
+    if (!el) return null;
+    const follower = { timer: 0, waiting: false, observer: null };
+    // Take the text as it stands and render it.
+    const take = () => {
+      follower.waiting = false;
+      const now = sourceOf(node);
+      if (now !== el.source) el.source = now;
+      el.removeAttribute('streaming');
+    };
+    const unfollow = () => {
+      follower.observer.disconnect();
+      clearTimeout(follower.timer);
+      following.delete(follower);
+      if (el._unfollow === unfollow) el._unfollow = null;
+    };
+    // Stopping the watcher: let go, but not before taking text that was waiting to settle.
+    follower.stop = () => { const waiting = follower.waiting; unfollow(); if (waiting) take(); };
+    follower.observer = new MutationObserver(() => {
+      const text = sourceOf(node);
+      if (text === el.source && !follower.waiting) return;
+      // More text: keep the drawing as it is (and any error quiet) until the text is still.
+      follower.waiting = true;
+      el.setAttribute('streaming', '');
+      clearTimeout(follower.timer);
+      follower.timer = setTimeout(take, settle);
+    });
+    follower.observer.observe(node, { childList: true, characterData: true, subtree: true });
+    el._unfollow = unfollow;
+    following.add(follower);
+    return el;
+  };
   const placeOf = (block) => {
     let message = block;
     while (message.parentNode && message.parentNode !== root) message = message.parentNode;
@@ -2852,7 +2889,7 @@ function watchBlocks(root, selector, attributes, settle) {
       // The same source this place has already drawn (the app rebuilt a finished message): now.
       if (text === place.done) {
         clearTimeout(place.timer); timing.delete(place);
-        upgrade(node, attributes, true);
+        upgradeAndFollow(node);
         continue;
       }
       if (!changed && timing.has(place)) continue;
@@ -2860,7 +2897,7 @@ function watchBlocks(root, selector, attributes, settle) {
       timing.add(place);
       place.timer = setTimeout(() => {
         timing.delete(place);
-        if (upgrade(place.node, attributes, true)) place.done = place.text;
+        if (upgradeAndFollow(place.node)) place.done = place.text;
       }, settle);
     }
   };
@@ -2876,6 +2913,7 @@ function watchBlocks(root, selector, attributes, settle) {
     observer.disconnect();
     for (const place of timing) clearTimeout(place.timer);
     timing.clear();
+    for (const follower of [...following]) follower.stop();
   };
 }
 
@@ -3059,6 +3097,8 @@ class WermaidDiagram extends HTMLElement {
     this._pending = false;
     // run({ watch }) gives its elements the shared cache of drawings (see the engine's `cache`).
     this._cache = null;
+    // Set while a watcher follows the block this element replaced; stops that following.
+    this._unfollow = null;
     this._onDark = () => { if ((this.getAttribute('dark') ?? 'auto') === 'auto') this._schedule(); };
     this._wire();
   }
@@ -3113,6 +3153,8 @@ class WermaidDiagram extends HTMLElement {
 
   disconnectedCallback() {
     darkQuery?.removeEventListener('change', this._onDark);
+    // A watcher following the block this element replaced lets go once the element is removed.
+    this._unfollow?.();
     this._observer?.disconnect();
     this._visibleObserver?.disconnect();
     this._visibleObserver = null;
