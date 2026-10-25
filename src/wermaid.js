@@ -13,10 +13,10 @@
  * ignores it and draws the stock layout.
  */
 
-import { THEMES, DEFAULT_THEME, withTheme } from './themes.js';
+import { THEMES, DEFAULT_THEME, THEME_NAME_RE, withTheme, defineTheme, listThemes, getTheme } from './themes.js';
 
-export { THEMES, DEFAULT_THEME, withTheme };
-export const VERSION = '0.3.0';
+export { THEMES, DEFAULT_THEME, withTheme, defineTheme, listThemes, getTheme };
+export const VERSION = '0.4.0';
 
 /* ------------------------------------------------------------------ */
 /* Viewer bounds                                                       */
@@ -115,8 +115,10 @@ function parseBlockLines(blockLines, firstLineNo) {
         if (title) overrides.settings.title = title;
         else errors.push({ line: lineNo, message: '@title needs a name, e.g. `@title Order pipeline`' });
       } else if (name === 'theme') {
+        // Any well-formed name: whether it's registered is only known at render time, where an
+        // unknown one falls back with a warning (and the name is kept for write-back).
         const [theme] = args;
-        if (!THEMES[theme]) errors.push({ line: lineNo, message: `@theme expects ${Object.keys(THEMES).join(', ')} — got "${theme ?? ''}"` });
+        if (!THEME_NAME_RE.test(theme ?? '')) errors.push({ line: lineNo, message: `@theme expects a theme name (lowercase letters, digits, dashes), e.g. ${Object.keys(THEMES).join(', ')} — got "${theme ?? ''}"` });
         else overrides.settings.theme = theme;
       } else {
         errors.push({ line: lineNo, message: `unknown setting "@${name}"` });
@@ -1087,7 +1089,8 @@ function applyOverrides(scene, overrides, mut) {
   const obstacles = [...geom.nodes.values()].map((g) => g.box);
   const movedBoxes = [...geom.nodes.entries()].filter(([, g]) => g.changed);
   const plans = [];
-  const edgeSetting = overrides.settings?.edges || null;
+  // `@edges`, else the theme's edge look (`scene.edgeDefault`), else Mermaid's own curves.
+  const edgeSetting = overrides.settings?.edges || scene.edgeDefault || null;
   for (const e of scene.edges.values()) {
     const ov = edgeOv.get(e.id);
     // The look this edge is drawn in: its own `style`, else `@edges`, else Mermaid's (null).
@@ -1290,13 +1293,26 @@ let counter = 0;
 export function createWermaid(mermaid) {
   /**
    * Render `source` into `container`.
-   * Options: `id` (SVG id), `theme` (palette name; defaults to the block's `@theme`,
-   * else Mermaid's own config), `dark` (use the palette's dark variant).
+   * Options: `id` (SVG id), `theme` (forces a palette), `defaultTheme` (used when the block's
+   * `@theme` names no registered theme), `dark` (use the palette's dark variant).
+   * With none of them, Mermaid's own config is left alone. A name that isn't registered is
+   * skipped with a warning; if no name resolves, `wermaid` is used.
    */
-  async function render(container, source, { id, theme, dark = false } = {}) {
+  async function render(container, source, { id, theme, defaultTheme, dark = false } = {}) {
     const parsed = parseSource(source);
     const svgId = id || `wm-${++counter}`;
-    const themeName = theme ?? parsed.overrides.settings.theme ?? null;
+    const themeWarnings = [];
+    let themeName = null;
+    const unknown = [];
+    for (const name of [theme, parsed.overrides.settings.theme, defaultTheme]) {
+      if (name == null || name === '') continue;
+      if (getTheme(name)) { themeName = name; break; }
+      if (!unknown.includes(name)) unknown.push(name);
+    }
+    if (!themeName && unknown.length) themeName = DEFAULT_THEME;
+    for (const name of unknown) themeWarnings.push(`Theme "${name}" isn't defined on this page; using ${themeName}.`);
+    const themeDef = getTheme(themeName);
+    if (themeDef?.warnings) themeWarnings.push(...themeDef.warnings);
     const body = themeName ? withTheme(parsed.body, themeName, { dark, el: container }) : parsed.body;
     const { svg: svgText, bindFunctions } = await mermaid.render(svgId, body);
     container.innerHTML = svgText;
@@ -1320,6 +1336,7 @@ export function createWermaid(mermaid) {
     if (scene) {
       scene.curve = curve;
       scene.padding = 8;
+      scene.edgeDefault = themeDef?.edges ?? null;
     }
     const mut = new Mutations();
     let overrides = parsed.overrides;
@@ -1328,11 +1345,11 @@ export function createWermaid(mermaid) {
     const diagram = {
       svg, svgId, type, supported, scene,
       theme: themeName,
-      background: themeName ? THEMES[themeName]?.background(dark, container) ?? null : null,
+      background: themeDef ? themeDef.background(dark, container) ?? null : null,
       parseErrors: parsed.errors,
       get overrides() { return overrides; },
       get geometry() { return geom; },
-      get warnings() { return geom?.warnings ?? []; },
+      get warnings() { return [...themeWarnings, ...(geom?.warnings ?? [])]; },
       /** Re-apply a set of overrides to the already-rendered diagram. */
       setOverrides(next) {
         overrides = next;
@@ -1371,7 +1388,7 @@ export function createWermaid(mermaid) {
     return diagram;
   }
 
-  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, THEMES, VERSION };
+  return { render, parseSource, serializeBlock, writeSource, emptyOverrides, resolveEdge, EDGE_STYLES, THEMES, VERSION, defineTheme, listThemes, getTheme };
 }
 
 export default createWermaid;

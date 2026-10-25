@@ -1,6 +1,6 @@
 {
   "name": "wermaid",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Manual layout overrides for vanilla Mermaid: keep the auto layout, nudge what needs it. Includes an embeddable <wermaid-diagram> viewer.",
   "type": "module",
   "main": "src/wermaid.js",

@@ -2,7 +2,7 @@
 <div id="a"></div><div id="b"></div>
 <script type="module">
 import mermaid from '/mermaid-dist/mermaid.esm.min.mjs';
-import { createWermaid, parseSource, withTheme } from '/src/wermaid.js';
+import { createWermaid, parseSource, withTheme, defineTheme, listThemes, getTheme } from '/src/wermaid.js';
 mermaid.initialize({ startOnLoad: false });
 const wermaid = createWermaid(mermaid);
 const R = []; const ok = (name, cond, extra) => R.push({ name, pass: !!cond, extra });
@@ -231,11 +231,83 @@ const snap = (svg) => ({
   const mm = await wermaid.render(document.getElementById('b'), BASE, { id: 't', theme: 'mermaid' });
   ok('theme option: mermaid neutral', fillOf(mm) === 'rgb(238, 238, 238)', fillOf(mm));
   ok('front matter stays first', withTheme('---\ntitle: X\n---\nflowchart LR\n A-->B', 'pele').startsWith('---\ntitle: X\n---\n%%{init:'));
-  const bad = parseSource(BASE + `\n%% @layout\n%% @theme neon\n%% @end`);
-  ok('unknown palette reports an error', bad.errors.length === 1 && !bad.overrides.settings.theme, bad.errors);
+  // An unregistered name is a warning at render time (section 14); only a malformed name is an error.
+  const bad = parseSource(BASE + `\n%% @layout\n%% @theme Neon!\n%% @end`);
+  ok('malformed palette name reports an error', bad.errors.length === 1 && !bad.overrides.settings.theme, bad.errors);
   pele.overrides.settings.edges = { style: 'rounded' };
   const out = pele.writeSource(BASE);
   ok('palette round-trips', /%% @layout v1\n%% @theme pele\n%% @edges rounded/.test(out), out);
+}
+// 14. Custom themes
+{
+  const el = document.getElementById('b');
+  const fillOf = (d) => getComputedStyle(d.svg.querySelector('g.node .label-container')).fill;
+  const textOf = (d) => getComputedStyle(d.svg.querySelector('g.node .nodeLabel')).color;
+  const rgb = (c) => {
+    const s = String(c).trim();
+    let m = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (m) { const h = m[1].length === 3 ? [...m[1]].map((x) => x + x).join('') : m[1]; return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); }
+    m = s.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    return m ? m.slice(1, 4).map(Number) : [NaN, NaN, NaN];
+  };
+  const luminance = (c) => {
+    const [r, g, b] = rgb(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const nodeGap = (d) => Math.abs(d.geometry.nodes.get('C').box.cy - d.geometry.nodes.get('D').box.cy);
+  const throws = (fn) => { try { fn(); return false; } catch (e) { return e instanceof TypeError; } };
+
+  defineTheme('acme', { label: 'Acme', colors: { nodeFill: '#ffeedd', background: '#ffffff', text: '#111111' },
+    edges: { style: 'orthogonal' }, spacing: { node: 120 } });
+  ok('theme: listed', listThemes().some((t) => t.name === 'acme' && t.label === 'Acme'), listThemes());
+  ok('theme: built-ins listed first', listThemes().slice(0, 3).map((t) => t.name).join() === 'mermaid,wermaid,pele', listThemes());
+  ok('theme: getTheme', getTheme('acme')?.label === 'Acme' && getTheme('nope') === null && getTheme('constructor') === null);
+  const a = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme acme\n%% @end', { id: 't1' });
+  const acmeRender = a;
+  ok('theme: block @theme uses the spec fill', fillOf(a) === 'rgb(255, 238, 221)', fillOf(a));
+  ok('theme: theme edge style routes every edge', [...a.geometry.edges.values()].every((g) => g.mode === 'route' && g.look === 'orthogonal'), [...a.geometry.edges.values()].map((g) => [g.mode, g.look]));
+  ok('theme: scene.edgeDefault from the theme', a.scene.edgeDefault?.style === 'orthogonal' && a.theme === 'acme' && a.background === '#ffffff', a.scene.edgeDefault);
+  ok('theme: edge default is not written to the block', !/@edges/.test(a.writeSource(BASE + '\n%% @layout\n%% @theme acme\n%% @end')));
+  const b = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme acme\n%% @edges curved\n%% @end', { id: 't2' });
+  ok('theme: @edges beats the theme', [...b.geometry.edges.values()].every((g) => g.look !== 'orthogonal'), [...b.geometry.edges.values()].map((g) => g.look));
+  const ps = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme acme\n%% @edges curved\n%% A->B style orthogonal\n%% @end', { id: 't2b' });
+  const looks = Object.fromEntries([...ps.geometry.edges].map(([id, g]) => [id, g.look]));
+  ok('theme: per-edge style beats both', looks.L_A_B_0 === 'orthogonal' && Object.entries(looks).every(([id, l]) => id === 'L_A_B_0' || l !== 'orthogonal'), looks);
+  const d = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme acme\n%% @end', { id: 't3', dark: true });
+  const dFill = fillOf(d); // read now: the next render into `el` replaces this SVG
+  ok('theme: dark derived', luminance(d.background) < 0.2 && contrast(textOf(d), d.background) >= 4.5, [d.background, textOf(d)]);
+  defineTheme('acme-dark', { extends: 'acme', dark: { colors: { background: '#202020' } } });
+  const dd = await wermaid.render(el, BASE, { id: 't3b', theme: 'acme-dark', dark: true });
+  ok('theme: dark values win', dd.background === '#202020' && fillOf(dd) === dFill, [dd.background, fillOf(dd), dFill]);
+  const u = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme nope\n%% @end', { id: 't4' });
+  ok('theme: unknown name warns and falls back', u.parseErrors.length === 0 && u.warnings.some((w) => w.includes('"nope"')) && u.theme === 'wermaid', [u.parseErrors, u.warnings, u.theme]);
+  u.setOverrides(u.overrides);
+  ok('theme: warning survives setOverrides', u.warnings.some((w) => w.includes('"nope"')), u.warnings);
+  u.showStock();
+  ok('theme: warning survives showStock', u.warnings.some((w) => w.includes('"nope"')), u.warnings);
+  ok('theme: unknown name round-trips', /%% @theme nope/.test(u.writeSource(BASE)), u.writeSource(BASE));
+  const x = await wermaid.render(el, BASE, { id: 't5', defaultTheme: 'acme' });
+  ok('theme: defaultTheme when block names none', x.theme === 'acme', x.theme);
+  const y = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme pele\n%% @end', { id: 't6', defaultTheme: 'acme' });
+  ok('theme: block beats defaultTheme', y.theme === 'pele', y.theme);
+  const z = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme nope\n%% @end', { id: 't6b', defaultTheme: 'acme' });
+  ok('theme: unknown block name falls back to defaultTheme', z.theme === 'acme' && z.warnings.some((w) => w.includes('using acme')), [z.theme, z.warnings]);
+  const f = await wermaid.render(el, BASE + '\n%% @layout\n%% @theme pele\n%% @end', { id: 't6c', theme: 'wermaid', defaultTheme: 'acme' });
+  ok('theme: theme option still forces', f.theme === 'wermaid', f.theme);
+  defineTheme('peach', { extends: 'pele' });
+  ok('theme: extends pele inherits its fill', fillOf(await wermaid.render(el, BASE, { id: 't7', theme: 'peach' })) === 'rgb(242, 240, 229)');
+  defineTheme('mm', { extends: 'mermaid' });
+  const m = await wermaid.render(el, BASE, { id: 't8', theme: 'mm' });
+  const mFill = fillOf(m);
+  const w = await wermaid.render(el, BASE, { id: 't9', theme: 'wermaid' });
+  const wermaidRender = w;
+  ok('theme: extends mermaid warns and uses wermaid', m.warnings.some((x) => x.includes('mermaid')) && mFill === fillOf(w), [m.warnings, mFill, fillOf(w)]);
+  ok('theme: built-in names are protected', throws(() => defineTheme('pele', {})));
+  ok('theme: bad names are rejected', throws(() => defineTheme('Acme', {})) && throws(() => defineTheme('9a', {})));
+  ok('theme: spacing widens the layout', nodeGap(acmeRender) > nodeGap(wermaidRender), [nodeGap(acmeRender), nodeGap(wermaidRender)]);
+  defineTheme('acme', { label: 'Acme 2', colors: { nodeFill: '#ddeeff' } });
+  ok('theme: a custom theme may be redefined', getTheme('acme').label === 'Acme 2' && listThemes().filter((t) => t.name === 'acme').length === 1);
 }
 window.RESULTS = R;
 </script></body></html>
