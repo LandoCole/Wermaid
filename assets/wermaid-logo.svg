@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" width="300" height="64" role="img" aria-label="Wermaid">
+  <!-- Mark + wordmark. The wordmark is live text in EB Garamond (falls back to a system serif). -->
+  <style>
+    .line { fill: none; stroke: #1E1F22; stroke-width: 2.8; stroke-linejoin: round; }
+    .head, .word { fill: #1E1F22; }
+    .word { font-family: Michelangelus, "EB Garamond", "Iowan Old Style", Georgia, serif; font-size: 46px; letter-spacing: -0.5px; }
+    @media (prefers-color-scheme: dark) { .line { stroke: #E7E7E3; } .head, .word { fill: #E7E7E3; } }
+  </style>
+  <rect class="line" x="6" y="4" width="8" height="8"/>
+  <path class="line" d="M10 12 V45 Q10 50 15 50 H19 Q24 50 24 45 V33 Q24 28 29 28 H35 Q40 28 40 33 V45 Q40 50 45 50 H49 Q54 50 54 45 V16"/>
+  <path class="head" d="M50.5 15 L54 8 L57.5 15 Z"/>
+  <text class="word" x="76" y="47">Wermaid</text>
+</svg>

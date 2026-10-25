@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Wermaid">
+  <style>
+    .line { fill: none; stroke: #1E1F22; stroke-width: 2.8; stroke-linejoin: round; }
+    .head { fill: #1E1F22; }
+    @media (prefers-color-scheme: dark) { .line { stroke: #E7E7E3; } .head { fill: #E7E7E3; } }
+  </style>
+  <rect class="line" x="6" y="4" width="8" height="8"/>
+  <path class="line" d="M10 12 V45 Q10 50 15 50 H19 Q24 50 24 45 V33 Q24 28 29 28 H35 Q40 28 40 33 V45 Q40 50 45 50 H49 Q54 50 54 45 V16"/>
+  <path class="head" d="M50.5 15 L54 8 L57.5 15 Z"/>
+</svg>

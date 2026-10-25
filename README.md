@@ -1,3 +1,5 @@
+<p><img src="assets/wermaid-logo.svg" alt="Wermaid" width="300" height="64"></p>
+
 # Wermaid
 
 Manual layout overrides for vanilla Mermaid. Mermaid still parses and lays out the diagram;
@@ -122,6 +124,15 @@ and nudging that separates overlapping segments.
 
 Supported: flowchart, state, class (anything using Mermaid's unified renderer).
 Other types (sequence, gantt, …) render as stock Mermaid.
+
+## Logo
+
+`assets/wermaid-mark.svg` is the mark: one routed connector, from a start node to an arrowhead,
+drawn as a W. `assets/wermaid-icon.svg` is the favicon cut (no node, heavier line), and
+`assets/wermaid-logo.svg` pairs the mark with the serif wordmark. All three switch to light
+strokes in dark mode.
+
+The name: Wermaid is Mermaid with its M flipped over into a W.
 
 ## Development
 

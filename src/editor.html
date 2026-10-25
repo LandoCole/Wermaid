@@ -1,5 +1,6 @@
 <title>Wermaid</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cstyle%3E*%7Bstroke:%231E1F22;fill:none%7D.a%7Bfill:%231E1F22;stroke:none%7D@media (prefers-color-scheme:dark)%7B*%7Bstroke:%23E7E7E3%7D.a%7Bfill:%23E7E7E3%7D%7D%3C/style%3E%3Cg stroke-width='6' stroke-linejoin='round'%3E%3Cpath d='M10 12 V45 Q10 50 15 50 H19 Q24 50 24 45 V33 Q24 28 29 28 H35 Q40 28 40 33 V45 Q40 50 45 50 H49 Q54 50 54 45 V16'/%3E%3Cpath class='a' d='M49 16 L54 6 L59 16 Z'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -47,8 +48,9 @@
     border-bottom: 1px solid var(--line);
     font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
   }
-  .wordmark { display: flex; align-items: center; gap: 10px; font-weight: 500; }
-  .wordmark svg { width: 16px; height: 16px; flex: none; }
+  .wordmark { display: flex; align-items: center; gap: 10px; }
+  .wordmark svg { width: 22px; height: 22px; flex: none; }
+  .wordmark span { font-family: var(--serif); font-size: 21px; line-height: 1; letter-spacing: -0.01em; text-transform: none; }
   .actions { display: flex; flex-wrap: wrap; gap: 0 20px; }
   .text-btn {
     background: none; border: 0; padding: 6px 0; cursor: pointer; color: var(--ink);
@@ -191,8 +193,8 @@
 
 <header class="topbar">
   <div class="wordmark">
-    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="0.5" width="6" height="6" fill="none" stroke="currentColor"/><rect x="9.5" y="9.5" width="6" height="6" fill="none" stroke="currentColor"/><path d="M3.5 7v5.5h5" fill="none" stroke="currentColor" stroke-dasharray="1.5 1.5"/></svg>
-    Wermaid
+    <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="8" height="8"/><path d="M10 12 V45 Q10 50 15 50 H19 Q24 50 24 45 V33 Q24 28 29 28 H35 Q40 28 40 33 V45 Q40 50 45 50 H49 Q54 50 54 45 V16"/><path d="M50.5 15 L54 8 L57.5 15 Z" fill="currentColor" stroke="none"/></svg>
+    <span>Wermaid</span>
   </div>
   <nav class="actions" aria-label="Actions">
     <button id="undo" class="text-btn" type="button" title="Ctrl/⌘ Z">Undo</button>
