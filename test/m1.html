@@ -326,6 +326,10 @@ const snap = (svg) => ({
   ok('theme: square theme routes before showStock', [...st.geometry.edges.values()].some((g) => g.mode === 'route'));
   st.showStock();
   ok('theme: showStock ignores the theme edge style', [...st.geometry.edges.values()].every((g) => g.mode !== 'route'), [...st.geometry.edges.values()].map((g) => g.mode));
+  // Mermaid turns ' into " inside %%{init}%% directives; a family with single quotes must survive it.
+  defineTheme('courier', { font: { family: "'Courier New', monospace" }, colors: { nodeFill: '#ffeedd' } });
+  const cr = await wermaid.render(el, BASE, { id: 't12', theme: 'courier' });
+  ok('theme: a single-quoted font family keeps the theme', fillOf(cr) === 'rgb(255, 238, 221)' && /Courier New/.test(getComputedStyle(cr.svg.querySelector('g.node .nodeLabel, g.node text') || cr.svg).fontFamily), [fillOf(cr), getComputedStyle(cr.svg.querySelector('g.node .nodeLabel, g.node text') || cr.svg).fontFamily]);
   defineTheme('acme', { label: 'Acme 2', colors: { nodeFill: '#ddeeff' } });
   ok('theme: a custom theme may be redefined', getTheme('acme').label === 'Acme 2' && listThemes().filter((t) => t.name === 'acme').length === 1);
 }

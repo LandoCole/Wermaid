@@ -1473,6 +1473,8 @@ function setThemePanel(open) {
     if (themePanel.contains(document.activeElement)) themeBtn.focus();
     setPreview(null);
   }
+  // The diagram plate just got narrower or wider: fit the drawing to it once the layout settles.
+  requestAnimationFrame(() => fitToSheet({ max: 1 }));
 }
 themeBtn.addEventListener('click', () => setThemePanel(themePanel.hidden));
 $('theme-close').addEventListener('click', () => setThemePanel(false));
@@ -1556,10 +1558,11 @@ $('theme-import').addEventListener('click', () => {
     say('Couldn’t read that. Paste a theme’s JSON, or a defineTheme(\'name\', { … }) call.', true);
     return;
   }
-  // Bare JSON is named after its label.
+  // A defineTheme('x', …) paste replaces x. Bare JSON is named after its label, never over a theme already here.
   const fromLabel = String(parsed.spec.label ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^[^a-z]+|-+$/g, '');
-  let name = parsed.name ?? (fromLabel || 'imported');
+  let name = parsed.name ?? uniqueName(fromLabel || 'imported');
   if (!validName(name)) name = uniqueName(THEME_NAME_RE.test(name) ? `${name}-custom` : 'imported');
+  const replacing = Object.hasOwn(customSpecs, name);
   const prev = { name: builder.name, spec: builder.spec };
   builder.name = name;
   builder.spec = structuredClone(parsed.spec);
@@ -1568,7 +1571,7 @@ $('theme-import').addEventListener('click', () => {
   fillThemePanel();
   applyTheme();
   $('theme-paste').value = '';
-  say(`Imported ${name}.`);
+  say(replacing ? `Replaced ${name}.` : `Imported ${name}.`);
 });
 
 /* ---------- boot ---------- */

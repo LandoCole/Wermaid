@@ -449,7 +449,11 @@ export function defineTheme(name, spec = {}) {
 export function withTheme(body, name, { dark = false, el = null } = {}) {
   const theme = getTheme(name);
   if (!theme) return body;
-  const directive = `%%{init: ${JSON.stringify(theme.config({ dark, el }))}}%%`;
+  // Mermaid turns every ' in a directive into " before parsing it as JSON, so a value such as
+  // `'Courier New', monospace` would break the JSON and drop the whole theme. JSON's '
+  // escape has no quote for Mermaid to swap and still parses back to '.
+  const json = JSON.stringify(theme.config({ dark, el })).replace(/'/g, '\\u0027');
+  const directive = `%%{init: ${json}}%%`;
   const fm = body.match(/^\s*---\n[\s\S]*?\n---\s*\n/);
   return fm ? `${fm[0]}${directive}\n${body.slice(fm[0].length)}` : `${directive}\n${body}`;
 }

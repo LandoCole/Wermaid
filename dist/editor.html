@@ -846,7 +846,11 @@ function defineTheme(name, spec = {}) {
 function withTheme(body, name, { dark = false, el = null } = {}) {
   const theme = getTheme(name);
   if (!theme) return body;
-  const directive = `%%{init: ${JSON.stringify(theme.config({ dark, el }))}}%%`;
+  // Mermaid turns every ' in a directive into " before parsing it as JSON, so a value such as
+  // `'Courier New', monospace` would break the JSON and drop the whole theme. JSON's '
+  // escape has no quote for Mermaid to swap and still parses back to '.
+  const json = JSON.stringify(theme.config({ dark, el })).replace(/'/g, '\\u0027');
+  const directive = `%%{init: ${json}}%%`;
   const fm = body.match(/^\s*---\n[\s\S]*?\n---\s*\n/);
   return fm ? `${fm[0]}${directive}\n${body.slice(fm[0].length)}` : `${directive}\n${body}`;
 }
@@ -3870,6 +3874,8 @@ function setThemePanel(open) {
     if (themePanel.contains(document.activeElement)) themeBtn.focus();
     setPreview(null);
   }
+  // The diagram plate just got narrower or wider: fit the drawing to it once the layout settles.
+  requestAnimationFrame(() => fitToSheet({ max: 1 }));
 }
 themeBtn.addEventListener('click', () => setThemePanel(themePanel.hidden));
 $('theme-close').addEventListener('click', () => setThemePanel(false));
@@ -3953,10 +3959,11 @@ $('theme-import').addEventListener('click', () => {
     say('Couldn’t read that. Paste a theme’s JSON, or a defineTheme(\'name\', { … }) call.', true);
     return;
   }
-  // Bare JSON is named after its label.
+  // A defineTheme('x', …) paste replaces x. Bare JSON is named after its label, never over a theme already here.
   const fromLabel = String(parsed.spec.label ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^[^a-z]+|-+$/g, '');
-  let name = parsed.name ?? (fromLabel || 'imported');
+  let name = parsed.name ?? uniqueName(fromLabel || 'imported');
   if (!validName(name)) name = uniqueName(THEME_NAME_RE.test(name) ? `${name}-custom` : 'imported');
+  const replacing = Object.hasOwn(customSpecs, name);
   const prev = { name: builder.name, spec: builder.spec };
   builder.name = name;
   builder.spec = structuredClone(parsed.spec);
@@ -3965,7 +3972,7 @@ $('theme-import').addEventListener('click', () => {
   fillThemePanel();
   applyTheme();
   $('theme-paste').value = '';
-  say(`Imported ${name}.`);
+  say(replacing ? `Replaced ${name}.` : `Imported ${name}.`);
 });
 
 /* ---------- boot ---------- */

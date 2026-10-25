@@ -218,6 +218,32 @@ ok('an undefined @theme shows in the palette picker', await p.$eval('#palette', 
 await p.selectOption('#edge-style', 'mermaid'); await p.waitForTimeout(200);
 ok('edge picker offers Mermaid curves', /%% @edges mermaid/.test(await src()));
 await p.selectOption('#edge-style', ''); await p.waitForTimeout(200);
+// 13b. review fixes: quoted font families, refit on open/close, imports never clobber each other
+await p.selectOption('#palette', 'gamma'); await settle();
+await p.fill('#theme-light-font-family', "'Courier New', monospace"); await settle();
+ok('a single-quoted font family keeps the theme', await nodeFill() === 'rgb(238, 221, 255)', await nodeFill());
+const diagramInView = () => p.evaluate(() => {
+  const v = document.getElementById('sheet-wrap').getBoundingClientRect(), d = document.querySelector('#sheet svg').getBoundingClientRect();
+  return d.left >= v.left - 1 && d.right <= v.right + 1 && d.top >= v.top - 1 && d.bottom <= v.bottom + 1 ? true : { v: [v.left, v.top, v.right, v.bottom], d: [d.left, d.top, d.right, d.bottom] };
+});
+await p.click('#theme-close'); await p.waitForTimeout(300);
+await p.click('#zoom-in'); await p.click('#zoom-in'); await p.click('#zoom-in'); await p.waitForTimeout(100);
+await p.click('#theme-btn'); await p.waitForTimeout(300);
+let inView = await diagramInView();
+ok('opening the theme panel refits the diagram', inView === true, inView);
+await p.click('#theme-close'); await p.waitForTimeout(300);
+inView = await diagramInView();
+ok('closing the theme panel refits the diagram', inView === true, inView);
+const storedNames = () => p.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('wermaid:themes:v1') || '{}')));
+const storedBefore = (await storedNames()).length;
+await importTheme(`{ "colors": { "nodeFill": "#112233" } }`, 'imported');
+await importTheme(`{ "colors": { "nodeFill": "#445566" } }`, 'imported-2');
+const stored = await p.evaluate(() => JSON.parse(localStorage.getItem('wermaid:themes:v1') || '{}'));
+ok('two bare imports give two stored themes', Object.keys(stored).length === storedBefore + 2 && stored.imported?.colors?.nodeFill === '#112233' && stored['imported-2']?.colors?.nodeFill === '#445566', stored);
+await importTheme(`{ "label": "Beta", "colors": { "nodeFill": "#000000" } }`, 'beta-2');
+ok('a bare import named like a stored theme gets its own name', (await storedNames()).includes('beta-2') && (await p.evaluate(() => JSON.parse(localStorage.getItem('wermaid:themes:v1')).beta.colors.nodeFill)) === '#ddeeff', await storedNames());
+await importTheme(`defineTheme('beta', { "colors": { "nodeFill": "#ccddee" } });`, 'beta');
+ok('an explicit defineTheme paste replaces and says so', (await p.textContent('#theme-msg')) === 'Replaced beta.' && (await p.evaluate(() => JSON.parse(localStorage.getItem('wermaid:themes:v1')).beta.colors.nodeFill)) === '#ccddee', await p.textContent('#theme-msg'));
 await p.screenshot({ path: SHOT + 'theme-builder.png' });
 console.log(R.join('\n'));
 await b.close();
