@@ -188,6 +188,17 @@ ok('stop() ends watching', await p.$eval('#later', (m) => !!m.querySelector('pre
   await a.waitForFunction(() => document.querySelectorAll('wermaid-diagram').length === 2 && [...document.querySelectorAll('wermaid-diagram')].every((e) => e.diagram), null, { timeout: 5000 }).catch(() => {});
   ok('auto.js watches for new blocks', await a.evaluate(() => document.querySelectorAll('wermaid-diagram')[1]?.diagram?.scene?.nodes.size === 3 && !document.querySelector('#late')), await a.evaluate(() => document.querySelectorAll('wermaid-diagram').length));
 
+  // data-mermaid is read against the page, not against auto.js: this page lives in test/fixtures
+  // and names a module beside itself, while auto.js is loaded from /src.
+  {
+    const rel = await b.newPage({ viewport: { width: 900, height: 600 } });
+    rel.on('pageerror', (e) => console.log('PAGEERR', e.message));
+    await rel.goto(BASE + '/test/fixtures/auto-relative.html');
+    await rel.waitForFunction(() => document.querySelector('wermaid-diagram')?.diagram, null, { timeout: 30000 }).catch(() => {});
+    ok('auto.js data-mermaid is resolved against the page', await rel.evaluate(() => document.querySelector('wermaid-diagram')?.diagram?.scene?.nodes.size === 2));
+    await rel.close();
+  }
+
   // The React helper, with a stub React so no download is needed.
   const reactRender = (props, options) => a.evaluate(async ([props, options]) => {
     const { createMermaidBlock } = await import('/src/react.js');

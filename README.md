@@ -254,6 +254,18 @@ Mermaid), the `source` property, or `src`. Changing any of them re-renders.
 | `persist` | `off` | Keep no adjustments in the browser (below). |
 | `persist-key` | text | Names the diagram for the stored adjustments (below). |
 
+Notes:
+
+- `defineWermaidElement(mermaid, { tag, fonts, config, defaults })` calls `mermaid.initialize` with
+  `startOnLoad: false` (so Mermaid doesn't also render the blocks) and `securityLevel: 'strict'`;
+  `config` adds to that. `tag` renames the element. `defaults` sets `theme`, `features`, `formats`
+  and `persist` for every diagram. `fonts: false` stops it adding the IBM Plex Mono stylesheet the
+  `wermaid` theme uses.
+- Diagrams render in shadow DOM, so page CSS doesn't leak in. A diagram inside something hidden
+  (a closed tab, `display: none`) waits until it's visible, since Mermaid needs real text sizes.
+- Exports leave out the toolbar and editing handles; inside Claude artifacts, saving goes through
+  the viewer's save prompt.
+
 ### Features
 
 `features` is a space-separated list of exactly what is on. Without the attribute you get
@@ -379,7 +391,7 @@ whole page:
 | `data-formats` | Space-separated download formats, e.g. `png svg` |
 | `data-theme` | The theme every diagram starts with |
 | `data-persist` | `off` keeps no adjustments |
-| `data-mermaid` | URL of the Mermaid ES module to use. Default: Mermaid 11.16.1 from jsDelivr. Use an absolute or root-relative URL (`/vendor/mermaid.esm.min.mjs`); a relative one resolves against the Wermaid file, not your page. |
+| `data-mermaid` | URL of the Mermaid ES module to use. Default: Mermaid 11.16.1 from jsDelivr. Any URL form works (`https://…`, `/vendor/mermaid.esm.min.mjs`, `vendor/mermaid.esm.min.mjs`); it is resolved against your page. |
 | `data-watch` | `false` upgrades only the blocks already on the page |
 
 `auto.js` watches the whole document. For a rebuild-style chat app, call `run` yourself with the

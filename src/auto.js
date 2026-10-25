@@ -10,7 +10,8 @@
  *   data-formats   space-separated download formats, for example "png svg"
  *   data-theme     the theme every diagram starts with
  *   data-persist   "off" (or "false") to keep nobody's adjustments in the browser
- *   data-mermaid   URL of the Mermaid ES module to use (default: Mermaid 11.16.1 from jsDelivr)
+ *   data-mermaid   URL of the Mermaid ES module to use, absolute or relative to the page
+ *                  (default: Mermaid 11.16.1 from jsDelivr)
  *   data-watch     "false" to upgrade only the blocks already on the page
  *
  * `ready` resolves once the element is registered and the first pass over the page has started.
@@ -28,7 +29,7 @@ const data = self?.dataset ?? {};
 const list = (value) => (value ?? '').split(/[\s,]+/).filter(Boolean);
 
 export const ready = (async () => {
-  const { default: mermaid } = await import(data.mermaid || MERMAID);
+  const { default: mermaid } = await import(data.mermaid ? new URL(data.mermaid, document.baseURI).href : MERMAID);
   const defaults = {};
   if (data.theme) defaults.theme = data.theme;
   if (data.features) defaults.features = list(data.features);
