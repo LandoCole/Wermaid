@@ -116,7 +116,7 @@
 
   .canvas { grid-template-rows: minmax(0, 1fr) auto; }
   .tools { display: flex; align-items: center; gap: 12px; }
-  .tools label { display: flex; align-items: center; gap: 6px; color: var(--graphite); font-size: 12px; cursor: pointer; }
+  .tools label, .tools-label { display: flex; align-items: center; gap: 6px; color: var(--graphite); font-size: 12px; cursor: pointer; }
   .tools input[type="checkbox"] { accent-color: var(--ink); margin: 0; }
   .zoom { display: flex; align-items: center; gap: 2px; }
   .zoom button { border: 0; background: none; cursor: pointer; padding: 0 5px; color: var(--graphite); font-size: 13px; }
@@ -180,7 +180,9 @@
     body { height: auto; min-height: 100%; overflow: visible; grid-template-rows: auto auto auto; }
     main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 46vh 72vh auto; gap: 28px; }
     .figcap { grid-column: 1; grid-row: 3; margin-top: -18px; }
-    #sheet { padding: 40px 20px 20px; }
+    #sheet { padding: 84px 20px 20px; }
+    .plate-title { flex-wrap: wrap; row-gap: 2px; }
+    .tools { flex-wrap: wrap; gap: 2px 12px; }
   }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 </style>
@@ -205,9 +207,6 @@
     <p>Mermaid lays it out. You nudge what needs it.</p>
   </div>
   <div class="controls">
-    <label class="field-inline" for="example"><span class="eyebrow">Example</span>
-      <select id="example" class="pick"></select>
-    </label>
     <div class="seg" role="group" aria-label="Layout shown">
       <button id="mode-stock" type="button" aria-pressed="false" title="Show Mermaid's own layout">Stock</button>
       <button id="mode-wermaid" type="button" aria-pressed="true" title="Show the layout with your overrides">With overrides</button>
@@ -217,7 +216,12 @@
 
 <main>
   <section class="plate source" aria-label="Source">
-    <div class="plate-title"><h2>Source</h2><span class="meta" id="block-count"></span></div>
+    <div class="plate-title">
+      <h2>Source</h2>
+      <label class="tools-label" for="example">Example
+        <select id="example" class="pick small"></select>
+      </label>
+    </div>
     <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Mermaid source with layout block"></textarea>
     <div id="messages" class="messages" aria-live="polite"></div>
   </section>
@@ -1947,7 +1951,6 @@ function showWarnings() {
 function updateBlockCount() {
   const n = [...overrides.targets.values()].filter((e) => e.at || e.nudge || e.size || e.via?.length || e.label || e.style).length
     + (overrides.settings?.edges ? 1 : 0) + (overrides.settings?.theme ? 1 : 0);
-  $('block-count').textContent = n ? `${n} override${n === 1 ? '' : 's'}` : 'no layout block';
   updateCaption(n);
 }
 
