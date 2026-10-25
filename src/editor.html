@@ -66,6 +66,10 @@
     padding-block: 20px 4px; padding-left: var(--gutter-l); padding-right: var(--gutter-r);
   }
   .titlerow h1 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 34px; line-height: 1.05; letter-spacing: -0.01em; }
+  /* The name is editable in place: a hairline under it on hover says so, a solid one while editing. */
+  #title { width: fit-content; min-width: 4ch; cursor: text; outline: none; border-bottom: 1px solid transparent; padding-bottom: 2px; max-width: 100%; overflow-wrap: anywhere; }
+  #title:hover { border-bottom-color: var(--line); }
+  #title:focus { border-bottom-color: var(--ink); }
   .titlerow p { margin: 6px 0 0; font-family: var(--serif); font-style: italic; font-size: 18px; color: var(--graphite); }
   .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
   .eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--graphite); }
@@ -230,7 +234,7 @@
 
 <section class="titlerow">
   <div>
-    <h1 id="title">Wermaid</h1>
+    <h1 id="title" contenteditable="plaintext-only" spellcheck="false" role="textbox" aria-label="Diagram name" title="Rename: names exported files">Wermaid</h1>
     <p>Mermaid lays it out. You nudge what needs it.</p>
   </div>
   <div class="controls">
@@ -853,12 +857,17 @@ function showCoords(p) {
   $('coords').textContent = p ? `x ${Math.round(p.x)}  y ${Math.round(p.y)}` : '';
 }
 
-function exampleName() {
+/** The example's own name, used when the source has no `@title`. */
+function defaultName() {
   return exSel.value === 'draft' ? 'Your draft' : exSel.selectedOptions[0]?.textContent || 'Diagram';
+}
+/** The diagram's name: the layout block's `@title`, else the example's. Names exported files. */
+function exampleName() {
+  return overrides?.settings?.title || defaultName();
 }
 function updateCaption(count) {
   const name = exampleName();
-  $('title').textContent = name;
+  if (document.activeElement !== $('title')) $('title').textContent = name;
   const state = showStock ? 'stock layout' : count ? `with ${count} override${count === 1 ? '' : 's'}` : 'auto layout';
   $('figcap').textContent = `Fig. 1 · ${name}, ${state}`;
 }
@@ -1185,6 +1194,30 @@ function setMode(stock) {
 $('mode-stock').addEventListener('click', () => setMode(true));
 $('mode-wermaid').addEventListener('click', () => setMode(false));
 
+/* Rename: the name is stored as `%% @title …` in the layout block, so it travels with the source. */
+const titleEl = $('title');
+let titleBefore = '';
+titleEl.addEventListener('focus', () => { titleBefore = titleEl.textContent; });
+titleEl.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') { ev.preventDefault(); titleEl.blur(); }
+  else if (ev.key === 'Escape') { titleEl.textContent = titleBefore; titleEl.blur(); }
+});
+titleEl.addEventListener('blur', () => {
+  const name = titleEl.textContent.replace(/\s+/g, ' ').trim();
+  if (!diagram) { titleEl.textContent = titleBefore; return; }
+  overrides.settings = overrides.settings || {};
+  // Blank, or the example's own name, means no custom name.
+  if (!name || name === defaultName()) delete overrides.settings.title;
+  else overrides.settings.title = name;
+  commit();
+  titleEl.textContent = exampleName();
+});
+// Pasting rich text keeps only its words.
+titleEl.addEventListener('paste', (ev) => {
+  ev.preventDefault();
+  document.execCommand('insertText', false, (ev.clipboardData?.getData('text/plain') || '').replace(/\s+/g, ' '));
+});
+
 $('edge-style').addEventListener('change', (ev) => {
   if (!diagram) return;
   overrides.settings = overrides.settings || {};
@@ -1197,8 +1230,9 @@ $('edge-style').addEventListener('change', (ev) => {
 $('reset-all').addEventListener('click', () => {
   if (!diagram || (!overrides.targets.size && !overrides.settings?.edges)) { toast('There are no overrides to clear'); return; }
   overrides.targets.clear();
-  // The palette is a choice of look, not a layout override, so it stays.
-  overrides.settings = overrides.settings?.theme ? { theme: overrides.settings.theme } : {};
+  // The palette and the name aren't layout overrides, so they stay.
+  const { theme, title } = overrides.settings || {};
+  overrides.settings = { ...(theme && { theme }), ...(title && { title }) };
   commit();
   toast('Overrides cleared. Undo brings them back.');
 });

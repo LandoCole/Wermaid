@@ -109,6 +109,11 @@ function parseBlockLines(blockLines, firstLineNo) {
           if (!/^\d+(\.\d+)?$/.test(radius)) errors.push({ line: lineNo, message: `@edges radius must be a number — got "${radius}"` });
           else overrides.settings.edges.radius = +radius;
         }
+      } else if (name === 'title') {
+        // Free text: the diagram's name (used for export file names). Comments can't span lines.
+        const title = text.slice(1 + name.length).trim();
+        if (title) overrides.settings.title = title;
+        else errors.push({ line: lineNo, message: '@title needs a name, e.g. `@title Order pipeline`' });
       } else if (name === 'theme') {
         const [theme] = args;
         if (!THEMES[theme]) errors.push({ line: lineNo, message: `@theme expects ${Object.keys(THEMES).join(', ')} — got "${theme ?? ''}"` });
@@ -218,7 +223,8 @@ export function serializeBlock(overrides, scene) {
   const entries = [...overrides.targets.values()].filter((e) => entryOps(e));
   const edgesSetting = overrides.settings?.edges;
   const themeSetting = overrides.settings?.theme;
-  if (!entries.length && !overrides.comments.length && !edgesSetting && !themeSetting) return '';
+  const titleSetting = overrides.settings?.title?.replace(/\s+/g, ' ').trim();
+  if (!entries.length && !overrides.comments.length && !edgesSetting && !themeSetting && !titleSetting) return '';
   const order = new Map();
   if (scene) {
     let i = 0;
@@ -231,6 +237,7 @@ export function serializeBlock(overrides, scene) {
   const label = (e) => (e.kind === 'edge' ? edgeSelector(e, scene) : e.selector);
   const width = Math.max(4, ...entries.map((e) => label(e).length));
   const out = ['%% @layout v1'];
+  if (titleSetting) out.push(`%% @title ${titleSetting}`);
   if (themeSetting) out.push(`%% @theme ${themeSetting}`);
   if (edgesSetting) out.push(`%% @edges ${edgesSetting.style}${edgesSetting.radius !== undefined ? ` ${r1(edgesSetting.radius)}` : ''}`);
   for (const c of overrides.comments) out.push(`%% ${c}`);
